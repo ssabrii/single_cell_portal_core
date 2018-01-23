@@ -161,8 +161,9 @@ class Study
   has_many :user_annotations, dependent: :delete
   has_many :user_data_arrays, dependent: :delete
 
-  # HCA metadata object
+  # HCA metadata objects
   has_many :analysis_metadata, dependent: :delete
+  has_one :project_metadatum, dependent: :delete
 
   # field definitions
   field :name, type: String
