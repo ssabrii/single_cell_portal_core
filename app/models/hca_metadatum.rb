@@ -102,68 +102,6 @@ class HCAMetadatum
     end
   end
 
-  # retrieve external reference information for nested metadata
-  # * *params*
-  #   - +version+ (String) => schema version number of this metadata object
-  #   - +definition_url+ (String) => URL to remote schema definition
-  #
-  # * *return*
-  #   - +Hash+ => Hash of metadata schema values, or error message
-  def child_definition_schema(version, definition_url)
-    begin
-      filename = definition_url.split('/').last
-      ext_def_filepath = File.join(self.definition_root(version), filename)
-      if File.exist?(ext_def_filepath)
-        existing_schema = File.read(ext_def_filepath)
-        JSON.parse(existing_schema)
-      else
-        # retrieve external definition from url
-        Rails.logger.info "#{Time.now}: saving new local copy of #{ext_def_filepath}"
-        metadata_schema = RestClient.get definition_url
-        # write a local copy
-        unless Dir.exist?(self.definition_root(version))
-          FileUtils.mkdir_p(self.definition_root(version))
-        end
-        new_schema = File.new(ext_def_filepath, 'w+')
-        new_schema.write metadata_schema.body
-        new_schema.close
-        JSON.parse(metadata_schema.body)
-      end
-    rescue RestClient::ExceptionWithResponse => e
-      Rails.logger.error "#{Time.now}: Error retrieving remote #{filename} (v#{version}) metadata schema: #{e.message}"
-      {error: "Error retrieving definition schema: #{e.message}"}
-    rescue JSON::ParserError => e
-      Rails.logger.error "#{Time.now}: Error parsing #{filename} (v#{version}) metadata schema: #{e.message}"
-      {error: "Error parsing definition schema: #{e.message}"}
-    end
-  end
-
-  # retrieve property or nested field definition information for external references
-  # * *params*
-  #   - +version+ (String) => schema version number of this metadata object
-  #   - +definition_url+ (String) => URL to remote schema definition
-  #   - +key+ (String) => root-level key to retrieve from metadata object (e.g. properties, required, etc.)
-  #   - +field+ (String) => (optional) sub-level key to retrieve from metadata object
-  #
-  # * *return*
-  #   - +Hash+ => Hash of child object definitions
-  def child_definitions(version, definition_url, key, field=nil)
-    begin
-      filename = definition_url.split('/').last
-      child_schema = self.child_definition_schema(version, definition_url)
-      defs = child_schema[key]
-      if field.present?
-        defs[field]
-      else
-        defs
-      end
-    rescue NoMethodError => e
-      field_key = field.present? ? "#{key}/#{field}" : key
-      Rails.logger.error "#{Time.now}: Error accessing child #{filename} metadata field definitions for #{field_key}: #{e.message}"
-      nil
-    end
-  end
-
   # set a value based on the schema definition for a particular field
   #
   # * *params*
