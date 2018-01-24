@@ -165,6 +165,8 @@ class Study
   has_many :analysis_metadata, dependent: :delete
   has_one :project_metadatum, dependent: :delete
 
+  has_one :study_identifier
+
   # field definitions
   field :name, type: String
   field :embargo, type: Date
@@ -214,7 +216,7 @@ class Study
 
   # callbacks
   before_validation :set_url_safe_name
-  before_validation :set_data_dir, :set_firecloud_workspace_name, on: :create
+  before_validation :set_data_dir, :set_firecloud_workspace_name, :set_study_identifier, on: :create
   # before_save       :verify_default_options
   after_create      :make_data_dir, :set_default_participant
   after_destroy     :remove_data_dir
@@ -378,6 +380,11 @@ class Study
   # helper to generate a URL to a specific FireCloud submission inside a study's GCP bucket
   def submission_url(submission_id)
     self.google_bucket_url + "/#{submission_id}"
+  end
+
+  # get the study's 'identifier' for use in a shorter/friendlier url
+  def identifier
+    self.study_identifier.identifier
   end
 
   ###
@@ -2029,6 +2036,11 @@ class Study
       @dir_val = SecureRandom.hex(32)
     end
     self.data_dir = @dir_val
+  end
+
+  # set the study 'identifier', a value that persists even if the study is deleted and will be used as part of a global ID
+  def set_study_identifier
+    StudyIdentifier.create(study_id: self.id)
   end
 
   ###
