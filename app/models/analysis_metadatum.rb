@@ -5,7 +5,7 @@
 #
 ##
 
-class AnalysisMetadatum
+class AnalysisMetadatum < HCAMetadatum
   include Mongoid::Document
   include Mongoid::Timestamps
 
@@ -52,64 +52,12 @@ class AnalysisMetadatum
   # INSTANCE METHODS
   ##
 
-  # root directory for storing metadata schema copies
-  def definition_root
-    Rails.root.join('data', 'HCA_metadata', self.version)
+  def entity_name
+    'analysis'
   end
 
-  # remote endpoint containing metadata schema
-  def definition_url
-    "https://raw.githubusercontent.com/HumanCellAtlas/metadata-schema/#{self.version}/json_schema/analysis.json"
-  end
-
-  # local filesytem location of copy of JSON schema
-  def definition_filepath
-    Rails.root.join(self.definition_root, 'analysis.json')
-  end
-
-  # return a parsed JSON object detailing the metadata schema for this object
-  def definition_schema
-    begin
-      # check for local copy first
-      if File.exists?(self.definition_filepath)
-        existing_schema = File.read(self.definition_filepath)
-        JSON.parse(existing_schema)
-      else
-        Rails.logger.info "#{Time.now}: saving new local copy of #{self.definition_filepath}"
-        metadata_schema = RestClient.get self.definition_url
-        # write a local copy
-        unless Dir.exist?(self.definition_root)
-          FileUtils.mkdir_p(self.definition_root)
-        end
-        new_schema = File.new(self.definition_filepath, 'w+')
-        new_schema.write metadata_schema.body
-        new_schema.close
-        JSON.parse(metadata_schema.body)
-      end
-    rescue RestClient::ExceptionWithResponse => e
-      Rails.logger.error "#{Time.now}: Error retrieving remote HCA Analysis metadata schema: #{e.message}"
-      {error: "Error retrieving definition schema: #{e.message}"}
-    rescue JSON::ParserError => e
-      Rails.logger.error "#{Time.now}: Error parsing HCA Analysis metadata schema: #{e.message}"
-      {error: "Error parsing definition schema: #{e.message}"}
-    end
-  end
-
-  # retrieve property or nested field definition information
-  # can retrieve info such as require fields, field definitions, property list, etc.
-  def definitions(key, field=nil)
-    begin
-      defs = self.definition_schema[key]
-      if field.present?
-        defs[field]
-      else
-        defs
-      end
-    rescue NoMethodError => e
-      field_key = field.present? ? "#{key}/#{field}" : key
-      Rails.logger.error "#{Time.now}: Error accessing remote HCA Analysis metadata field definitions for #{field_key}: #{e.message}"
-      nil
-    end
+  def entity_filename
+    self.entity_name + '.json'
   end
 
   # retrieve a mapping of field names between HCA task metadata and FireCloud call metadata
@@ -121,26 +69,6 @@ class AnalysisMetadatum
         Hash[AnalysisMetadatum::FIRECLOUD_TASK_INFO[self.version].zip(AnalysisMetadatum::HCA_TASK_INFO[self.version])]
       else
         nil
-    end
-  end
-
-  # set a value based on the schema definition for a particular field
-  def set_value_by_type(definitions, value)
-    value_type = definitions['type']
-    case value_type
-      when 'string'
-        value
-      when 'integer'
-        value.to_i
-      when 'array'
-        if value.is_a?(Array)
-          value
-        elsif value.is_a?(String)
-          # try to split on commas to convert into array
-          value.split(',')
-        end
-      else
-        value
     end
   end
 
@@ -159,7 +87,7 @@ class AnalysisMetadatum
           attributes = task_attributes.first
           # get available definitions and then load the corresponding value in FireCloud call metadata
           # using the HCA_TASK_MAP constant
-          self.definitions('definitions','task')['properties'].each do |property, definitions|
+          self.definitions(self.entity_filename, self.version,'definitions','task')['properties'].each do |property, definitions|
             location = self.task_mapping[property]
             # only retrieve value if we have a valid map
             if location.present?
@@ -208,7 +136,7 @@ class AnalysisMetadatum
                                                                           submission_workflow['workflowId'])
     end
     # retrieve list of metadata properties
-    properties = self.definitions('properties')
+    properties = self.definitions(self.entity_filename, self.version,'properties')
     properties.each do |property, definitions|
       # decide where to pull information based on the property requested
       value = nil
@@ -265,7 +193,7 @@ class AnalysisMetadatum
         when 'core'
           core = {
               'type' => 'analysis',
-              'schema_url' => self.definition_url,
+              'schema_url' => self.definition_url(self.version, self.entity_name),
               'schema_version' => self.version
           }
           value = set_value_by_type(definitions, core)
