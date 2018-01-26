@@ -5,9 +5,10 @@
 #
 ##
 
-class AnalysisMetadatum < HCAMetadatum
+class AnalysisMetadatum
   include Mongoid::Document
   include Mongoid::Timestamps
+  include HCAUtilities
 
   # field definitions
   belongs_to :study
@@ -47,18 +48,33 @@ class AnalysisMetadatum < HCAMetadatum
   FIRECLOUD_TASK_INFO = {
       '4.6.1' => %w(runtimeAttributes/cpu runtimeAttributes/disks runtimeAttributes/docker stderr stdout runtimeAttributes/memory name start end runtimeAttributes/zones)
   }
+  ENTITY_NAME = 'analysis'
+  ENTITY_FILENAME = ENTITY_NAME + '.json'
+
+  ##
+  # MIXIN METHODS
+  # These methods are convenience wrappers around included methods from HCAUtilities
+  ##
+
+  def definition_url
+    get_definition_url(self.version, ENTITY_NAME)
+  end
+
+  def definition_filepath
+    get_definition_filepath(ENTITY_FILENAME, self.version)
+  end
+
+  def definition_schema(filename: ENTITY_FILENAME, version: self.version)
+    parse_definition_schema(filename, version)
+  end
+
+  def definitions(filename: ENTITY_FILENAME, version: self.version, key:, field: nil)
+    parse_definitions(filename, version, key, field)
+  end
 
   ##
   # INSTANCE METHODS
   ##
-
-  def entity_name
-    'analysis'
-  end
-
-  def entity_filename
-    self.entity_name + '.json'
-  end
 
   # retrieve a mapping of field names between HCA task metadata and FireCloud call metadata
   def task_mapping(type='HCA')
@@ -87,7 +103,7 @@ class AnalysisMetadatum < HCAMetadatum
           attributes = task_attributes.first
           # get available definitions and then load the corresponding value in FireCloud call metadata
           # using the HCA_TASK_MAP constant
-          self.definitions(self.entity_filename, self.version,'definitions','task')['properties'].each do |property, definitions|
+          self.definitions(key: 'definitions', field: 'task')['properties'].each do |property, definitions|
             location = self.task_mapping[property]
             # only retrieve value if we have a valid map
             if location.present?
@@ -136,7 +152,7 @@ class AnalysisMetadatum < HCAMetadatum
                                                                           submission_workflow['workflowId'])
     end
     # retrieve list of metadata properties
-    properties = self.definitions(self.entity_filename, self.version,'properties')
+    properties = self.definitions(key: 'properties')
     properties.each do |property, definitions|
       # decide where to pull information based on the property requested
       value = nil
@@ -193,7 +209,7 @@ class AnalysisMetadatum < HCAMetadatum
         when 'core'
           core = {
               'type' => 'analysis',
-              'schema_url' => self.definition_url(self.version, self.entity_name),
+              'schema_url' => self.definition_url,
               'schema_version' => self.version
           }
           value = set_value_by_type(definitions, core)
@@ -202,7 +218,7 @@ class AnalysisMetadatum < HCAMetadatum
         when 'metadata_schema'
           value = set_value_by_type(definitions, self.version)
         when 'analysis_id'
-          value = set_value_by_type(definitions, "SCP-#{self.submission_id}")
+          value = set_value_by_type(definitions, "SCPA-#{self.submission_id}")
       end
       payload[property] = value
     end

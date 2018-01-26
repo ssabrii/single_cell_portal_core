@@ -1,12 +1,11 @@
 ##
 #
-# HCAMetadatum: generic class that all HCA-style metadata objects inherit from.  Contains general getters/setters
+# HCAMetadatum: Module that all HCA-style metadata objects inherit from.  Contains general getters/setters
 # for loading and parsing source metadata schema objects
 #
 ##
 
-class HCAMetadatum
-
+module HCAUtilities
   # root directory for storing metadata schema copies
   #
   # * *params*
@@ -14,7 +13,7 @@ class HCAMetadatum
   #
   # * *return*
   #   - +Pathname+ => path to root directory containing JSON files of same version number
-  def definition_root(version)
+  def get_definition_root(version)
     Rails.root.join('data', 'HCA_metadata', version)
   end
 
@@ -26,7 +25,7 @@ class HCAMetadatum
   #
   # * *return*
   #   - +String+ => url to remote schema definition JSON in github
-  def definition_url(version, entity)
+  def get_definition_url(version, entity)
     "https://raw.githubusercontent.com/HumanCellAtlas/metadata-schema/#{version}/json_schema/#{entity}.json"
   end
 
@@ -37,8 +36,8 @@ class HCAMetadatum
   #
   # * *return*
   #   - +Pathname+ => path to metadata schema JSON file
-  def definition_filepath(filename, version)
-    Rails.root.join(self.definition_root(version), filename)
+  def get_definition_filepath(filename, version)
+    Rails.root.join(self.get_definition_root(version), filename)
   end
 
   # return a parsed JSON object detailing the metadata schema for this object
@@ -48,21 +47,21 @@ class HCAMetadatum
   #
   # * *return*
   #   - +Hash+ => Hash of metadata schema values, or error message
-  def definition_schema(filename, version)
+  def parse_definition_schema(filename, version)
     begin
       entity = filename.split('.').first
       # check for local copy first
-      if File.exists?(self.definition_filepath(filename, version))
-        existing_schema = File.read(self.definition_filepath(filename, version))
+      if File.exists?(self.get_definition_filepath(filename, version))
+        existing_schema = File.read(self.get_definition_filepath(filename, version))
         JSON.parse(existing_schema)
       else
-        Rails.logger.info "#{Time.now}: saving new local copy of #{self.definition_filepath(filename, version)}"
-        metadata_schema = RestClient.get self.definition_url(version, entity)
+        Rails.logger.info "#{Time.now}: saving new local copy of #{self.get_definition_filepath(filename, version)}"
+        metadata_schema = RestClient.get self.get_definition_url(version, entity)
         # write a local copy
-        unless Dir.exist?(self.definition_root(version))
-          FileUtils.mkdir_p(self.definition_root(version))
+        unless Dir.exist?(self.get_definition_root(version))
+          FileUtils.mkdir_p(self.get_definition_root(version))
         end
-        new_schema = File.new(self.definition_filepath(filename, version), 'w+')
+        new_schema = File.new(self.get_definition_filepath(filename, version), 'w+')
         new_schema.write metadata_schema.body
         new_schema.close
         JSON.parse(metadata_schema.body)
@@ -87,9 +86,9 @@ class HCAMetadatum
   #
   # * *return*
   #   - +Hash+ => Hash of object definitions
-  def definitions(filename, version, key, field=nil)
+  def parse_definitions(filename, version, key, field=nil)
     begin
-      defs = self.definition_schema(filename, version)[key]
+      defs = self.parse_definition_schema(filename, version)[key]
       if field.present?
         defs[field]
       else

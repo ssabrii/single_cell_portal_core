@@ -5,9 +5,10 @@
 #
 ##
 
-class ProjectMetadatum < HCAMetadatum
+class ProjectMetadatum
   include Mongoid::Document
   include Mongoid::Timestamps
+  include HCAUtilities
 
   # field definitions
   belongs_to :study
@@ -19,19 +20,37 @@ class ProjectMetadatum < HCAMetadatum
 
   before_validation :set_slug, on: :create
 
-  SLUG_PREFIX = 'SCP'
+  ENTITY_NAME = 'project'
+  ENTITY_FILENAME = ENTITY_NAME + '.json'
+
+  ##
+  # INSTANCE METHODS
+  ##
 
   # HCA-compatible project identifier (unique URL across all instances of the portal)
   def project_identifier
     opts = ActionMailer::Base.default_url_options
-    "#{opts[:protocol]}://#{opts[:host]}/single_cell/study/#{self.slug}"
+    "#{opts[:protocol]}://#{opts[:host]}/single_cell/study/#{self.study.identifier}"
   end
 
-  def entity_name
-    'project'
+  ##
+  # MIXIN METHODS
+  # These methods are convenience wrappers around included methods from HCAUtilities
+  ##
+
+  def definition_url
+    get_definition_url(self.version, ENTITY_NAME)
   end
 
-  def entity_filename
-    self.entity_name + '.json'
+  def definition_filepath
+    get_definition_filepath(ENTITY_FILENAME, self.version)
+  end
+
+  def definition_schema(filename: ENTITY_FILENAME, version: self.version)
+    parse_definition_schema(filename, version)
+  end
+
+  def definitions(filename: ENTITY_FILENAME, version: self.version, key:, field: nil)
+    parse_definitions(filename, version, key, field)
   end
 end
