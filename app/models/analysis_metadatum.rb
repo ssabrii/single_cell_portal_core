@@ -29,6 +29,7 @@ class AnalysisMetadatum
 
   validates_presence_of :payload, :version, :name, :submission_id
   validates_uniqueness_of :submission_id
+  validate :validate_payload
 
   ##
   # CALLBACKS
@@ -56,20 +57,12 @@ class AnalysisMetadatum
   # These methods are convenience wrappers around included methods from HCAUtilities
   ##
 
-  def definition_url
-    get_definition_url(self.version, ENTITY_NAME)
+  def filename
+    ENTITY_FILENAME
   end
 
-  def definition_filepath
-    get_definition_filepath(ENTITY_FILENAME, self.version)
-  end
-
-  def definition_schema(filename: ENTITY_FILENAME, version: self.version)
-    parse_definition_schema(filename, version)
-  end
-
-  def definitions(filename: ENTITY_FILENAME, version: self.version, key:, field: nil)
-    parse_definitions(filename, version, key, field)
+  def entity
+    ENTITY_NAME
   end
 
   ##
@@ -103,7 +96,7 @@ class AnalysisMetadatum
           attributes = task_attributes.first
           # get available definitions and then load the corresponding value in FireCloud call metadata
           # using the HCA_TASK_MAP constant
-          self.definitions(key: 'definitions', field: 'task')['properties'].each do |property, definitions|
+          self.parse_definitions(key: 'definitions', field: 'task')['properties'].each do |property, definitions|
             location = self.task_mapping[property]
             # only retrieve value if we have a valid map
             if location.present?
@@ -152,7 +145,7 @@ class AnalysisMetadatum
                                                                           submission_workflow['workflowId'])
     end
     # retrieve list of metadata properties
-    properties = self.definitions(key: 'properties')
+    properties = self.parse_definitions(key: 'properties')
     properties.each do |property, definitions|
       # decide where to pull information based on the property requested
       value = nil
@@ -209,7 +202,7 @@ class AnalysisMetadatum
         when 'core'
           core = {
               'type' => 'analysis',
-              'schema_url' => self.definition_url,
+              'schema_url' => self.get_definition_url,
               'schema_version' => self.version
           }
           value = set_value_by_type(definitions, core)
@@ -230,5 +223,20 @@ class AnalysisMetadatum
   # set payload object on create
   def set_payload
     self.payload = self.create_payload
+  end
+
+
+  # check that the automatically generated payload is valid as per schema definitions for this object
+  def validate_payload
+    begin
+      properties = self.parse_definitions(key: 'properties')
+      required = self.parse_definitions(key: 'required')
+      validated_payload = validate_item_payload(properties, required, self.payload)
+      if validated_payload != self.payload
+        errors.add(:payload, 'Payload object is invalid')
+      end
+    rescue => e
+      errors.add(:payload, "#{e.message}")
+    end
   end
 end

@@ -8,60 +8,48 @@
 module HCAUtilities
   # root directory for storing metadata schema copies
   #
-  # * *params*
-  #   - +version+ (String) => schema version number of this metadata object
-  #
   # * *return*
   #   - +Pathname+ => path to root directory containing JSON files of same version number
-  def get_definition_root(version)
-    Rails.root.join('data', 'HCA_metadata', version)
+  def get_definition_root
+    Rails.root.join('data', 'HCA_metadata', self.version)
   end
 
   # remote endpoint containing metadata schema
   #
-  # * *params*
-  #   - +version+ (String) => schema version number of this metadata object
-  #   - +entity+ (String) => name of metadata entity (e.g. analysis, project, sample, etc.)
-  #
   # * *return*
   #   - +String+ => url to remote schema definition JSON in github
-  def get_definition_url(version, entity)
-    "https://raw.githubusercontent.com/HumanCellAtlas/metadata-schema/#{version}/json_schema/#{entity}.json"
+  def get_definition_url(filename: self.filename)
+    "https://raw.githubusercontent.com/HumanCellAtlas/metadata-schema/#{self.version}/json_schema/#{filename}"
   end
 
   # local filesytem location of copy of JSON schema
-
-  # * *params*
-  #   - +filename+ (String) => filename of metadata schema JSON
   #
   # * *return*
   #   - +Pathname+ => path to metadata schema JSON file
-  def get_definition_filepath(filename, version)
-    Rails.root.join(self.get_definition_root(version), filename)
+  def get_definition_filepath(filename: self.filename)
+    Rails.root.join(self.get_definition_root, filename)
   end
 
-  # return a parsed JSON object detailing the metadata schema for this object
-  # * *params*
-  #   - +filename+ (String) => filename of metadata schema JSON
-  #   - +version+ (String) => schema version number of this metadata object
+  # return a parsed JSON object detailing the metadata schema for the requested object
+  #
+  #   - +filename+ (String) => (optional) name of metadata file to parse, defaults to object's filename
   #
   # * *return*
   #   - +Hash+ => Hash of metadata schema values, or error message
-  def parse_definition_schema(filename, version)
+  def parse_definition_schema(filename: self.filename)
     begin
-      entity = filename.split('.').first
       # check for local copy first
-      if File.exists?(self.get_definition_filepath(filename, version))
-        existing_schema = File.read(self.get_definition_filepath(filename, version))
+      if File.exists?(self.get_definition_filepath(filename: filename))
+        existing_schema = File.read(self.get_definition_filepath(filename: filename))
         JSON.parse(existing_schema)
       else
-        Rails.logger.info "#{Time.now}: saving new local copy of #{self.get_definition_filepath(filename, version)}"
-        metadata_schema = RestClient.get self.get_definition_url(version, entity)
+        Rails.logger.info "#{Time.now}: saving new local copy of #{self.get_definition_filepath(filename: filename)}"
+        metadata_schema = RestClient.get self.get_definition_url(filename: filename)
         # write a local copy
-        unless Dir.exist?(self.get_definition_root(version))
-          FileUtils.mkdir_p(self.get_definition_root(version))
+        unless Dir.exist?(self.get_definition_root)
+          FileUtils.mkdir_p(self.get_definition_root)
         end
-        new_schema = File.new(self.get_definition_filepath(filename, version), 'w+')
+        new_schema = File.new(self.get_definition_filepath(filename: filename), 'w+')
         new_schema.write metadata_schema.body
         new_schema.close
         JSON.parse(metadata_schema.body)
@@ -75,20 +63,18 @@ module HCAUtilities
     end
   end
 
-  # retrieve property or nested field definition information
+  # retrieve property definition information
   # can retrieve info such as require fields, field definitions, property list, etc.
   #
   # * *params*
-  #   - +filename+ (String) => filename of metadata schema JSON
-  #   - +version+ (String) => schema version number of this metadata object
   #   - +key+ (String) => root-level key to retrieve from metadata object (e.g. properties, required, etc.)
   #   - +field+ (String) => (optional) sub-level key to retrieve from metadata object
   #
   # * *return*
   #   - +Hash+ => Hash of object definitions
-  def parse_definitions(filename, version, key, field=nil)
+  def parse_definitions(key:, field: nil)
     begin
-      defs = self.parse_definition_schema(filename, version)[key]
+      defs = self.parse_definition_schema[key]
       if field.present?
         defs[field]
       else
@@ -101,19 +87,47 @@ module HCAUtilities
     end
   end
 
+  # retrieve nested field definition information
+  # can retrieve info such as require fields, field definitions, property list, etc.
+  #
+  # * *params*
+  #   - +reference_url+ (String) => reference URL to pull source schema from
+  #   - +lookup+ (String) => lookup field
+  #
+  # * *return*
+  #   - +Hash+ => Hash of object definitions
+  def get_nested_definitions(reference_url:, lookup:)
+    begin
+      if reference_url.include?('#')
+        parts = reference_url.split('#')
+        entity = parts.last.split('/').last
+        defs = parse_definitions(key: 'definitions', field: entity)
+        defs[lookup]
+      else
+        filename = reference_url.split('/').last
+        ext_schema = parse_definition_schema(filename)
+        ext_schema[filename][lookup]
+      end
+    rescue NoMethodError => e
+      Rails.logger.error "#{Time.now}: Error accessing #{reference_url} field definitions for #{lookup}: #{e.message}"
+      nil
+    end
+  end
+
   # set a value based on the schema definition for a particular field
   #
   # * *params*
-  #   - +definitions+ (Hash) => Hash of field defintions (from *definitions* or *child_definitions*)
+  #   - +definitions+ (Hash) => Hash of field defintions (from *parse_definitions*)
   #   - +value+ (Multiple) => value to set
   #
   # * *return*
   #   - +Multiple+ => Can return String, Integer, Array
   #
   # * *raises*
-  #   - +TypeError+ => if value to be set does not match the *definitions['pattern']* attribute (if present)
+  #   - +TypeError+ => if value to be set does not match the expected type or pattern (if present)
   def set_value_by_type(definitions, value)
     value_type = definitions['type']
+    value_items = definitions['items']
     value_pattern = definitions['pattern']
     case value_type
       when 'string'
@@ -129,14 +143,61 @@ module HCAUtilities
       when 'integer'
         value.to_i
       when 'array'
+        array_item_type = value_items['type']
         if value.is_a?(Array)
-          value
-        elsif value.is_a?(String)
-          # try to split on commas to convert into array
-          value.split(',')
+          if array_item_type.present?
+            validation_class = array_item_type.classify.constantize
+            value.each do |val|
+              if !val.is_a?(validation_class)
+                raise TypeError.new("#{val} is not a #{validation_class}; type mismatch of #{val.class.name}")
+              end
+            end
+          end
+        else
+          raise TypeError.new("#{value} is not the expected intput type; expected array but found #{value.class.name}.")
         end
+        value
       else
         value
     end
+  end
+
+  # validate the schema of an item in a payload based on its definitions
+  #
+  # * *params*
+  #   - +entity+ (Hash) => entity to source definitions & requirements from (e.g. project, sample, contact, etc.)
+  #   - +version+ (String) => schema version number of this metadata object
+  #   - +item+ (Hash) => item to be validated
+  #
+  # * *return*
+  #   - +Hash+ => validated Hash of input item, extraneous values will be removed
+  #
+  # * *raises*
+  #   - +ArgumentError+ => if input item does not contain a required field
+  def validate_item_payload(entity_definitions, required_fields, item_payload)
+    entity_definitions.each do |field, definitions|
+      # get corresponding value from item
+      item_value = item_payload[field]
+      # check if field is required
+      if required_fields.include?(field) && item_value.blank?
+        raise ArgumentError.new("Missing required property in payload: #{field}")
+      end
+      if definitions['items'].present? && definitions['items']['$ref'].present?
+        # we have an external reference to validate
+        external_ref = definitions['items']['$ref']
+        req = self.get_nested_definitions(reference_url: external_ref, lookup: 'required')
+        defs = self.get_nested_definitions(reference_url: external_ref, lookup: 'properties')
+        if item_value.is_a?(Array)
+          item_value.each do |val|
+            validate_item_payload(defs, req, val)
+          end
+        else
+          validate_item_payload(defs, req, item_value)
+        end
+      else
+        item_payload[field] = set_value_by_type(definitions, item_value)
+      end
+    end
+    item_payload
   end
 end

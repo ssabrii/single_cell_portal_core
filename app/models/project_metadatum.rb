@@ -33,24 +33,11 @@ class ProjectMetadatum
     "#{opts[:protocol]}://#{opts[:host]}/single_cell/study/#{self.study.identifier}"
   end
 
-  ##
-  # MIXIN METHODS
-  # These methods are convenience wrappers around included methods from HCAUtilities
-  ##
-
-  def definition_url
-    get_definition_url(self.version, ENTITY_NAME)
+  def filename
+    ENTITY_FILENAME
   end
 
-  def definition_filepath
-    get_definition_filepath(ENTITY_FILENAME, self.version)
-  end
-
-  def definition_schema(filename: ENTITY_FILENAME, version: self.version)
-    parse_definition_schema(filename, version)
-  end
-
-  def definitions(filename: ENTITY_FILENAME, version: self.version, key:, field: nil)
-    parse_definitions(filename, version, key, field)
+  def entity
+    ENTITY_NAME
   end
 end
