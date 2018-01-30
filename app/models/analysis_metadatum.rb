@@ -211,7 +211,7 @@ class AnalysisMetadatum
         when 'metadata_schema'
           value = set_value_by_type(definitions, self.version)
         when 'analysis_id'
-          value = set_value_by_type(definitions, "SCPA-#{self.submission_id}")
+          value = set_value_by_type(definitions, self.submission_id)
       end
       payload[property] = value
     end
@@ -224,7 +224,6 @@ class AnalysisMetadatum
   def set_payload
     self.payload = self.create_payload
   end
-
 
   # check that the automatically generated payload is valid as per schema definitions for this object
   def validate_payload

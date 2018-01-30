@@ -897,6 +897,38 @@ class StudiesController < ApplicationController
     end
   end
 
+  ##
+  #
+  # PROJECT METADATA METHODS
+  #
+  ##
+
+  def edit_project_metadata
+    @project_metadatum = @study.project_metadatum
+    if @project_metadatum.nil?
+      @project_metadatum = @study.project_metadatum.build(version: '4.6.1')
+    end
+  end
+
+  def update_project_metadata
+    @project_metadatum = @study.project_metadatum
+    if @project_metadatum.nil?
+      @project_metadatum = @study.project_metadatum.build(version: '4.6.1')
+    end
+
+    respond_to do |format|
+      if @project_metadatum.update(project_metadatum_params)
+        changes = ['Project Metadata']
+        if @study.study_shares.any?
+          SingleCellMailer.share_update_notification(@study, changes, current_user).deliver_now
+        end
+        format.html { redirect_to studies_path, notice: "Project Metadata for '#{@study.name}' was successfully updated." }
+      else
+        format.html { render :edit_project_metadata }
+      end
+    end
+  end
+
   private
 
   ###
@@ -930,6 +962,10 @@ class StudiesController < ApplicationController
   def default_options_params
     params.require(:study_default_options).permit(:cluster, :annotation, :color_profile, :expression_label, :cluster_point_size,
                                                   :cluster_point_alpha, :cluster_point_border)
+  end
+
+  def project_metadatum_params
+    params.require(:project_metadatum).permit(:study_id, :version, :payload)
   end
 
   def set_file_types

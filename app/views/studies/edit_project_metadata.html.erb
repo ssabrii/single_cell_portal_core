@@ -1,0 +1,14 @@
+<h1>Editing Project Metadata for '<%= @study.name %>'</h1>
+<%= form_for(@project_metadatum, url: update_project_metadata_path, html: {class: 'form', id: 'project-metadatum-form'}) do |f| %>
+  <% if @project_metadatum.errors.any? %>
+    <div class="bs-callout bs-callout-danger" id="study-errors-block">
+      <h4><%= pluralize(@project_metadatum.errors.count, "error") %> prohibited this project metadata from being saved:</h4>
+      <ul>
+        <% @project_metadatum.errors.full_messages.each do |message| %>
+          <li><%= message %></li>
+        <% end %>
+      </ul>
+    </div>
+  <% end %>
+
+<% end %>

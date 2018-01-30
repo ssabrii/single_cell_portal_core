@@ -61,6 +61,8 @@ Rails.application.routes.draw do
         post 'parse', to: 'studies#parse', as: :parse_study_file
         get 'load_annotation_options', to: 'studies#load_annotation_options', as: :load_annotation_options
         post 'update_default_options', to: 'studies#update_default_options', as: :update_default_options
+        get 'project_metadata', to: 'studies#edit_project_metadata', as: :edit_project_metadata
+				post 'project_metadata', to: 'studies#update_project_metadata', as: :update_project_metadata
 			end
     end
 
