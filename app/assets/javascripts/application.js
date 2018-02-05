@@ -59,6 +59,10 @@ var PAGE_RENDERED = false;
 var OPEN_MODAL = '';
 var CLUSTER_TYPE = '3d';
 
+// Minimum width of plot + legend
+// Addresses https://github.com/broadinstitute/single_cell_portal/issues/20
+var minPlotAreaWidth = 700;
+
 $(document).on('shown.bs.modal', function(e) {
     console.log("modal " + $(e.target).attr('id') + ' opened');
     OPEN_MODAL = $(e.target).attr('id');
@@ -85,9 +89,61 @@ $(document).on('click', '[data-toggle="offcanvas"]', function () {
 
 });
 
-// Prevent scroll upon clicking View Options link
-$(document).on('click', '#view-option-link', function(e) { e.preventDefault(); });
+// Ensures that position of the Explore tab's internal tabs are flush with left container border
+function setTabNavLeftMargin() {
+  var tabNavLeft,
+    viewOptionsIsOpen = $('#render-target > .row-offcanvas').hasClass('active'),
+    searchPanelIsVisible = $('#search-parent').is(':visible');
 
+  if (viewOptionsIsOpen) {
+    if (searchPanelIsVisible) {
+      tabNavLeft = '0px';
+    } else {
+      tabNavLeft = '22%';
+    }
+  } else {
+    if (searchPanelIsVisible) {
+      tabNavLeft = '0px';
+    } else {
+      tabNavLeft = '13px';
+    }
+  }
+  $('#view-tabs li:first-child').css('margin-left', tabNavLeft);
+}
+
+// Prevent scroll upon clicking View Options link
+$(document).on('click', '#view-option-link', function(e) {
+  e.preventDefault();
+  setTabNavLeftMargin();
+});
+
+
+// Toggles search panel upon clicking burger menu to left of "Search genes"
+$(document).on('click', '#search-omnibar-menu i', function(e) {
+
+  var searchParent = $('#search-parent');
+
+  if (searchParent.is(':visible')) {
+    // Search options panel is open, so close it.
+    searchParent.hide();
+    $('#render-target').addClass('col-md-13').removeClass('col-md-10');
+    setTabNavLeftMargin();
+    $(this).removeClass('open');
+  } else {
+    // Search options panel is closed, so open it.
+    searchParent.show();
+    $('#render-target').removeClass('col-md-13').addClass('col-md-10');
+    setTabNavLeftMargin();
+    $(this).addClass('open');
+  }
+  $(window).trigger('resizeEnd');
+});
+
+// When a change in made in the Explore tab's "Enhance Gene Search" panel,
+// do a search with the newly-specified options.
+$(document).on('change', '#panel-genes-search input, #panel-genes-search select', function() {
+  $('#perform-gene-search').click();
+});
 
 jQuery.railsAutocomplete.options.noMatchesLabel = "No matches in this study";
 
@@ -766,6 +822,22 @@ function validateUnique(formId, textFieldClass) {
             textField.parent().removeClass('has-error');
         }
     });
+}
+
+function validateCandidateUpload(formId, filename, classSelector) {
+    var names = [];
+    classSelector.each(function(index, name) {
+        var n = $(name).val().trim();
+        if (n !== '') {
+            names.push(n);
+        }
+    });
+    if (names.filter(function(n) {return n === filename}).length > 1) {
+        alert(filename + ' has already been uploaded or is staged for upload.  Please select a different file.');
+        return false;
+    } else {
+        return true;
+    }
 }
 
 // function to call Google Analytics whenever AJAX call is made

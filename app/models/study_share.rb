@@ -25,7 +25,7 @@ class StudyShare
 
 	validates_uniqueness_of :email, scope: :study_id
 
-	index({ email: 1, study_id: 1 }, { unique: true })
+	index({ email: 1, study_id: 1 }, { unique: true, background: true })
 
 	PERMISSION_TYPES = %w(Edit View Reviewer)
 	FIRECLOUD_ACLS = ['WRITER', 'READER', 'NO ACCESS']

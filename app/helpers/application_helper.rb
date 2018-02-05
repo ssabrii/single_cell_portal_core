@@ -6,7 +6,7 @@ module ApplicationHelper
 			if params[:search][:gene]
 				@gene
 			elsif !params[:search][:genes].nil?
-				@genes.map{|gene| gene['gene']}
+				@genes.map{|gene| gene['name']}
 			end
 		elsif params[:gene]
 			params[:gene]

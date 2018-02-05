@@ -22,9 +22,14 @@ $('#search_cluster').val("<%= params[:cluster] %>");
 $(window).off('resizeEnd');
 $(window).on('resizeEnd', function() {
     var curSize = $('#cluster-plot').actual('width') * SCATTER_RATIO;
+
+    if (curSize < minPlotAreaWidth) {
+      curSize = minPlotAreaWidth;
+    }
+
     layout['width'] = curSize;
     layout['height'] = curSize;
-    Plotly.newPlot('cluster-plot', data, layout);
+    Plotly.relayout('cluster-plot', layout);
 });
 
 // attach click event for toggle switch

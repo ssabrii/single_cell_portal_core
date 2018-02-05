@@ -578,7 +578,7 @@ class UiTestSuite < Test::Unit::TestCase
 	end
 
 	# test to verify deleting files removes them from gcs buckets
-	test 'admin: delete study file' do
+	test 'admin: create-study: delete study file' do
 		puts "#{File.basename(__FILE__)}: '#{self.method_name}'"
 
 		path = @base_url + '/studies'
@@ -743,6 +743,11 @@ class UiTestSuite < Test::Unit::TestCase
 		upload_btn.click
 		# close modal
 		close_modal('upload-success-modal')
+		# assert that we cannot delete the newly uploaded file
+		exp_form = @driver.find_elements(:class, 'initialize_expression_form').last
+		delete_btn = exp_form.find_element(:class, 'disabled-delete')
+		assert !delete_btn.nil?, 'Did not find disabled delete button for newly uploaded file'
+		assert delete_btn['disabled'] == 'true', "Delete button is not correctly disabled, expected disabled == 'true' but found #{delete_btn['disabled']}"
 		next_btn = @driver.find_element(:id, 'next-btn')
 		next_btn.click
 
@@ -1791,6 +1796,8 @@ class UiTestSuite < Test::Unit::TestCase
 		# assert that reporter access was removed
 		close_modal('message_modal')
 		open_ui_tab('users')
+		search_box = @driver.find_element(:xpath, "//div[@id='users']//input[@type='search']")
+		search_box.send_keys($share_email)
 		share_roles = @driver.find_element(:id, share_email_id + '-roles')
 		assert share_roles.text == '', "did not remove reporter access from #{$share_email}"
 
@@ -2100,15 +2107,15 @@ class UiTestSuite < Test::Unit::TestCase
 		# try public rout
 		@driver.get non_share_public_link
 		public_alert_text = @driver.find_element(:id, 'alert-content').text
-		assert public_alert_text == 'You do not have permission to view the requested page.',
-					 "did not properly redirect, expected 'You do not have permission to view the requested page.' but got #{public_alert_text}"
+		assert public_alert_text == 'You do not have permission to perform that action.',
+					 "did not properly redirect, expected 'You do not have permission to perform that action.' but got #{public_alert_text}"
 
 		# try private route
 		@driver.get non_share_private_link
 		wait_for_modal_open('message_modal')
 		private_alert_text = @driver.find_element(:id, 'alert-content').text
-		assert private_alert_text == 'You do not have permission to view the requested page.',
-					 "did not properly redirect, expected 'You do not have permission to view the requested page.' but got #{private_alert_text}"
+		assert private_alert_text == 'You do not have permission to perform that action.',
+					 "did not properly redirect, expected 'You do not have permission to perform that action.' but got #{private_alert_text}"
 
 		puts "#{File.basename(__FILE__)}: '#{self.method_name}' successful!"
 	end
@@ -2433,14 +2440,19 @@ class UiTestSuite < Test::Unit::TestCase
 		genes = @genes.shuffle.take(rand(2..5))
 		search_box = @driver.find_element(:id, 'search_genes')
 		search_box.send_keys(genes.join(' ') + ' foo')
+
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
+
 		consensus = @driver.find_element(:id, 'search_consensus')
+
 		# select a random consensus measurement
 		opts = consensus.find_elements(:tag_name, 'option').delete_if {|o| o.text == 'None'}
 		selected_consensus = opts.sample
 		selected_consensus_value = selected_consensus['value']
 		selected_consensus.click
-		search_genes = @driver.find_element(:id, 'perform-gene-search')
-		search_genes.click
+
 		assert element_present?(:id, 'box-controls'), 'could not find expression boxplot'
 		assert element_present?(:id, 'scatter-plots'), 'could not find expression scatter plots'
 		assert element_present?(:id, 'missing-genes'), 'did not find missing genes list'
@@ -2558,14 +2570,19 @@ class UiTestSuite < Test::Unit::TestCase
 		new_genes = @genes.shuffle.take(rand(2..5))
 		search_box = @driver.find_element(:id, 'search_genes')
 		search_box.send_keys(new_genes.join(' '))
+
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
+
 		new_consensus = @driver.find_element(:id, 'search_consensus')
+
 		# select a random consensus measurement
 		new_opts = new_consensus.find_elements(:tag_name, 'option').delete_if {|o| o.text == 'None'}
 		new_selected_consensus = new_opts.sample
 		new_selected_consensus_value = new_selected_consensus['value']
 		new_selected_consensus.click
-		search_genes = @driver.find_element(:id, 'perform-gene-search')
-		search_genes.click
+
 		assert element_present?(:id, 'box-controls'), 'could not find expression boxplot'
 		assert element_present?(:id, 'scatter-plots'), 'could not find expression scatter plots'
 
@@ -2735,11 +2752,13 @@ class UiTestSuite < Test::Unit::TestCase
 		wait_until_page_loads(path)
 		open_ui_tab('study-visualize')
 
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
+
 		# upload gene list
 		search_upload = @driver.find_element(:id, 'search_upload')
 		search_upload.send_keys(@test_data_path + 'search_genes.txt')
-		search_genes = @driver.find_element(:id, 'perform-gene-search')
-		search_genes.click
 
 		assert element_present?(:id, 'plots'), 'could not find expression heatmap'
 		@wait.until {wait_for_morpheus_render('#heatmap-plot', 'morpheus')}
@@ -2756,10 +2775,14 @@ class UiTestSuite < Test::Unit::TestCase
 		wait_until_page_loads(private_study_path)
 		open_ui_tab('study-visualize')
 
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
+
 		search_upload = @driver.find_element(:id, 'search_upload')
 		search_upload.send_keys(@test_data_path + 'search_genes.txt')
 		search_genes = @driver.find_element(:id, 'perform-gene-search')
-		search_genes.click
+
 		assert element_present?(:id, 'plots'), 'could not find expression heatmap'
 		@wait.until {wait_for_morpheus_render('#heatmap-plot', 'morpheus')}
 		private_heatmap_drawn = @driver.execute_script("return $('#heatmap-plot').data('morpheus').heatmap !== undefined;")
@@ -2776,6 +2799,10 @@ class UiTestSuite < Test::Unit::TestCase
 		@driver.get(path)
 		wait_until_page_loads(path)
 		open_ui_tab('study-visualize')
+
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
@@ -2804,6 +2831,10 @@ class UiTestSuite < Test::Unit::TestCase
 		@driver.get private_study_path
 		wait_until_page_loads(private_study_path)
 		open_ui_tab('study-visualize')
+
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
@@ -2834,6 +2865,10 @@ class UiTestSuite < Test::Unit::TestCase
 		@driver.get(path)
 		wait_until_page_loads(path)
 		open_ui_tab('study-visualize')
+
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
@@ -2952,6 +2987,10 @@ class UiTestSuite < Test::Unit::TestCase
 		@driver.get private_study_path
 		wait_until_page_loads(private_study_path)
 		open_ui_tab('study-visualize')
+
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
@@ -3179,6 +3218,9 @@ class UiTestSuite < Test::Unit::TestCase
 		assert loaded_annotation['value'] == annotation_value, "did not load correct annotation; expected #{annotation_value} but loaded #{loaded_annotation['value']}"
 
 		# now check the back button in the search box to make sure it preserves values
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		back_btn = @driver.find_element(:id, 'clear-gene-search')
 		back_btn.click
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
@@ -3201,6 +3243,9 @@ class UiTestSuite < Test::Unit::TestCase
 		@wait.until {wait_for_morpheus_render('#heatmap-plot', 'morpheus')}
 
 		# click back button in search box
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		back_btn = @driver.find_element(:id, 'clear-gene-search')
 		back_btn.click
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
@@ -3214,6 +3259,9 @@ class UiTestSuite < Test::Unit::TestCase
 		assert heatmap_annot == annotation_value, "cluster was not preserved correctly from heatmap view, expected #{annotation_value} but found #{heatmap_annot}"
 
 		# show gene list in scatter mode
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
 		gene_list_panel.click
 		wait_for_render(:id, 'expression')
@@ -3229,6 +3277,9 @@ class UiTestSuite < Test::Unit::TestCase
 		@wait.until {wait_for_plotly_render('#expression-plots', 'box-rendered')}
 
 		# click back button in search box
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		back_btn = @driver.find_element(:id, 'clear-gene-search')
 		back_btn.click
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
@@ -3611,6 +3662,9 @@ class UiTestSuite < Test::Unit::TestCase
 		wait_until_page_loads(test_study_path)
 		open_ui_tab('study-visualize')
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		select_dropdown = @driver.find_element(:id, 'create_annotations_panel')
 		select_dropdown.click
 		# let collapse animation complete
@@ -3629,9 +3683,10 @@ class UiTestSuite < Test::Unit::TestCase
 		wait_until_page_loads(two_d_study_path)
 		open_ui_tab('study-visualize')
 
-		# Create an annotation from the study page
-
 		# Click selection tab
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		select_dropdown = @driver.find_element(:id, 'create_annotations_panel')
 		select_dropdown.click
 		# let collapse animation complete
@@ -3743,6 +3798,9 @@ class UiTestSuite < Test::Unit::TestCase
 		reference_rendered = @driver.execute_script("return $('#expression-plots').data('reference-rendered')")
 		assert reference_rendered, "reference plot did not finish rendering, expected true but found #{reference_rendered}"
 
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
 		gene_list_panel.click
 		wait_for_render(:id, 'expression')
@@ -3769,8 +3827,9 @@ class UiTestSuite < Test::Unit::TestCase
 		scatter_link = @driver.find_element(:id, 'scatter-link')
 		scatter_link.click
 		wait_for_render(:id, 'scatter-plots')
-		@driver.find_element(:id, 'search-genes-link').click
-		@wait.until {!element_visible?(:id, 'panel-genes-search')}
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 
 		# Click selection tabs
 		select_dropdown = @driver.find_element(:id, 'create_annotations_panel')
@@ -3893,6 +3952,9 @@ class UiTestSuite < Test::Unit::TestCase
 
 		sleep 0.5
 
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
 		gene_list_panel.click
 		wait_for_render(:id, 'expression')
@@ -4120,6 +4182,9 @@ class UiTestSuite < Test::Unit::TestCase
 
 		sleep 0.5
 
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
 		gene_list_panel.click
 		wait_for_render(:id, 'expression')
@@ -4311,6 +4376,9 @@ class UiTestSuite < Test::Unit::TestCase
 
 		# choose the newly persisted annotation
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
+		view_options_panel = @driver.find_element(:id, 'view-option-link')
+		view_options_panel.click
+		wait_for_render(:id, 'view-options')
 		annotation_dropdown = @driver.find_element(:id, 'annotation')
 		annotation_dropdown.send_keys("user-#{$random_seed}")
 		@wait.until {wait_for_plotly_render('#cluster-plot', 'rendered')}
@@ -4361,6 +4429,9 @@ class UiTestSuite < Test::Unit::TestCase
 		reference_rendered = @driver.execute_script("return $('#expression-plots').data('reference-rendered')")
 		assert reference_rendered, "reference plot did not finish rendering, expected true but found #{reference_rendered}"
 
+		search_menu = @driver.find_element(:id, 'search-omnibar-menu-icon')
+		search_menu.click
+		wait_for_render(:id, 'search_consensus')
 		gene_list_panel = @driver.find_element(:id, 'gene-lists-link')
 		gene_list_panel.click
 		wait_for_render(:id, 'expression')
@@ -4674,6 +4745,8 @@ class UiTestSuite < Test::Unit::TestCase
 			sub.find_element(:class, "submission-state").text == 'Done' &&
 					sub.find_element(:class, "submission-status").text == 'Succeeded'
 		}
+
+		omit_if completed_submission.nil?, 'Skipping test; No completed submissions'
 
 		# view run metadata
 		view_btn = completed_submission.find_element(:class, 'view-submission-metadata')

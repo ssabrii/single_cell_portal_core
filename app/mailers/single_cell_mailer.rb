@@ -195,7 +195,7 @@ class SingleCellMailer < ApplicationMailer
       @admins = User.where(admin: true).map(&:email)
 
       unless @admins.empty?
-        mail(to: @admins, reply_to: @requester, subject: "[Single Cell Portal Admin Notification]: #{@subject}") do |format|
+        mail(to: @admins, reply_to: @requester, subject: "[Single Cell Portal Admin Notification#{Rails.env != 'production' ? " (#{Rails.env})" : nil}]: #{@subject}") do |format|
           format.html
         end
       end
@@ -217,7 +217,7 @@ class SingleCellMailer < ApplicationMailer
     @missing_files = missing_files
     @admins = User.where(admin: true).map(&:email)
 
-    mail(to: @admins, subject: "[Single Cell Portal Admin Notification]: Sanity check results: #{@missing_files.size} files missing") do |format|
+    mail(to: @admins, subject: "[Single Cell Portal Admin Notification#{Rails.env != 'production' ? " (#{Rails.env})" : nil}]: Sanity check results: #{@missing_files.size} files missing") do |format|
       format.html
     end
   end

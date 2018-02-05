@@ -35,7 +35,11 @@
 					<%= f.submit 'Save', class: 'btn btn-block btn-success save-study-file', disabled: study_file.upload_file_name.nil? %>
 				</div>
 				<div class="col-xs-6">
-					<%= link_to 'Delete', delete_study_file_study_path(@study._id, study_file._id, target: "#misc_form_#{study_file._id}"), method: :delete, class: 'btn btn-block btn-danger delete-file', data: {remote: true} %>
+          <% if study_file.generation.blank? %>
+            <%= link_to 'Delete', 'javascript:;', class: 'btn btn-block btn-danger disabled-delete', disabled: 'disabled', title: 'You must wait until the file has finished pushing to FireCloud before deleting', data: {toggle: 'tooltip'} %>
+          <% else %>
+            <%= link_to 'Delete', delete_study_file_study_path(@study._id, study_file._id, target: "#misc_form_#{study_file._id}"), method: :delete, class: 'btn btn-block btn-danger delete-file', data: {remote: true} %>
+          <% end %>
 				</div>
 			</div>
 		</div>
@@ -53,19 +57,25 @@
 				maxChunkSize: 10000000,
 				type: 'PATCH',
 				add: function (e, data) {
-					fileUploading = true;
-					var that = this;
-					var fileName = data.files[0].name.replace(/ /g, '_');
-					$.getJSON("<%= resume_upload_study_path %>", { file: fileName }, function (result) {
-						var file = result.file;
-            if (file == null) {
-                fileUploading = false;
-                $("#study-files-notice-target").html("<%= escape_javascript( render partial: 'studies/study_file_notices', locals: {message: "You have already uploaded this file.  Please select another file."}) %>");
+					  fileUploading = true;
+					  var that = this;
+					  var fileName = data.files[0].name.replace(/ /g, '_');
+            $('#misc_form_<%= study_file._id %> .filename').val(fileName);
+            canUpload = validateCandidateUpload("#misc_form_<%= study_file._id %>", fileName, $('.initialize_misc_form .filename'));
+            if ( canUpload ) {
+                $.getJSON("<%= resume_upload_study_path %>", {file: fileName}, function (result) {
+                    var file = result.file;
+                    if (file == null) {
+                        fileUploading = false;
+                        $("#study-files-notice-target").html("<%= escape_javascript( render partial: 'studies/study_file_notices', locals: {message: "You have already uploaded this file.  Please select another file."}) %>");
+                    } else {
+                        data.uploadedBytes = file && file.size;
+                        $.blueimp.fileupload.prototype.options.add.call(that, e, data);
+                    }
+                });
             } else {
-              data.uploadedBytes = file && file.size;
-              $.blueimp.fileupload.prototype.options.add.call(that, e, data);
+                $('#misc_form_<%= study_file._id %> .filename').val('');
             }
-					});
 				},
 				chunkdone: function(e, data) {
 					var perc = parseInt(data.loaded / data.total * 100, 10);

@@ -79,8 +79,8 @@ Rails.application.routes.draw do
 		get 'bulk_data/:study_name/:download_object/:totat', to: 'site#download_bulk_files', as: :download_bulk_files, constraints: {filename: /.*/}
 
 		# autocomplete
-		resources :expression_score, only: [:show, :index] do
-			get :autocomplete_expression_score_gene, on: :collection
+		resources :gene, only: [:show, :index] do
+			get :autocomplete_gene_name, on: :collection
     end
 
     # user account actions

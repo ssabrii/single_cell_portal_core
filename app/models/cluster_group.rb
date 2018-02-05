@@ -25,15 +25,15 @@ class ClusterGroup
     end
   end
 
-  has_many :data_arrays do
+  has_many :data_arrays, as: :linear_data do
     def by_name_and_type(name, type, subsample_threshold=nil)
       where(name: name, array_type: type, subsample_threshold: subsample_threshold).order_by(&:array_index).to_a
     end
   end
 
-  index({ name: 1, study_id: 1 }, { unique: true })
-  index({ study_id: 1 }, { unique: false })
-  index({ study_id: 1, study_file_id: 1}, { unique: false })
+  index({ name: 1, study_id: 1 }, { unique: true, background: true })
+  index({ study_id: 1 }, { unique: false, background: true })
+  index({ study_id: 1, study_file_id: 1}, { unique: false, background: true })
 
   # fixed values to subsample at
   SUBSAMPLE_THRESHOLDS = [1000, 10000, 20000].freeze
@@ -106,7 +106,7 @@ class ClusterGroup
       when 'study'
         # in addition to array of annotation values, we need a key to preserve the associations once we sort
         # the annotations by value
-        all_annots = self.study.study_metadata_values(annotation_name, annotation_type)
+        all_annots = self.study.cell_metadata.by_name_and_type(annotation_name, annotation_type).cell_annotations
         @annotation_key = {}
         @annotations = []
         @cells.each do |cell|
@@ -267,5 +267,43 @@ class ClusterGroup
     end
     Rails.logger.info "#{Time.now}: Subsampling complete for cluster '#{self.name}' using annotation: #{annotation_name} (#{annotation_type}, #{annotation_scope}) at resolution #{sample_size}"
     true
+  end
+
+  ##
+  #
+  # CLASS INSTANCE METHODS
+  #
+  ##
+
+  def self.generate_new_data_arrays
+    start_time = Time.now
+    arrays_created = 0
+    self.all.each do |cluster|
+      arrays_to_save = []
+      arrays = DataArray.where(cluster_group_id: cluster.id)
+      arrays.each do |array|
+        arrays_to_save << cluster.data_arrays.build(name: array.name, cluster_name: array.cluster_name, array_type: array.array_type,
+                                                    array_index: array.array_index, study_id: array.study_id,
+                                                    study_file_id: array.study_file_id, values: array.values,
+                                                    subsample_threshold: array.subsample_threshold,
+                                                    subsample_annotation: array.subsample_annotation)
+      end
+      arrays_to_save.map(&:save)
+      arrays_created += arrays_to_save.size
+    end
+    end_time = Time.now
+    seconds_diff = (start_time - end_time).to_i.abs
+
+    hours = seconds_diff / 3600
+    seconds_diff -= hours * 3600
+
+    minutes = seconds_diff / 60
+    seconds_diff -= minutes * 60
+
+    seconds = seconds_diff
+
+    msg = "Cluster Group migration complete: generated #{arrays_created} new child data_array records; elapsed time: #{hours} hours, #{minutes} minutes, #{seconds} seconds"
+    Rails.logger.info msg
+    msg
   end
 end

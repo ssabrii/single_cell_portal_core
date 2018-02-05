@@ -437,13 +437,30 @@ label {
 }
 
 #search-parent {
+  margin-top: 8px;
   z-index: 500;
+}
+
+#perform-gene-search {
+  background-color: #337ab7;
+  color: white;
+}
+
+#view-tabs li:first-child {
+  margin-left: 13px;
 }
 
 #wdl-contents pre {
   height: 400px;
 }
 
+#render-target.col-md-13 {
+  padding: 0 15px;
+}
+
+#render-target .tab-content > div > div {
+  min-width: 700px;
+}
 
 .workflow-tab {
   margin: 15px 0;
@@ -473,6 +490,32 @@ h4, .h4, h5, .h5, h6, .h6 {
   float: right;
   margin-top: 16px;
   margin-right: 4px;
+}
+
+#search-omnibar-menu i {
+  float: left;
+  margin-right: 7px;
+  font-size: 20px;
+  margin-top: 5px;
+  width: 25px;
+  height: 25px;
+  padding: 3px 4px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+#search-omnibar-menu i.open {
+  background-color: #e6e6e6;
+}
+
+#search_genes, #perform-gene-search:focus {
+  border: 1px solid #ccc;
+  box-shadow: none;
+  outline: none;
+}
+
+#view-options-panel {
+  padding-left: 15px;
 }
 
 /*

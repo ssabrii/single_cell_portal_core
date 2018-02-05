@@ -35,7 +35,11 @@
 					<%= f.submit 'Save', class: 'btn btn-block btn-success save-study-file', disabled: (study_file.upload_file_name.nil? || study_file.parse_status == 'parsing' ) %>
 				</div>
 				<div class="col-xs-6">
-					<%= link_to 'Delete', delete_study_file_study_path(@study._id, study_file._id, target: '#metadata_form'), method: :delete, class: 'btn btn-block btn-danger delete-file', disabled: study_file.upload_file_name.nil?, data: {remote: true} %>
+          <% if study_file.parsing? || study_file.upload_file_name.nil? %>
+            <%= link_to 'Delete', 'javascript:;', class: 'btn btn-block btn-danger disabled-delete', disabled: 'disabled', title: 'You must wait until the file has finished uploading & parsing before deleting', data: {toggle: 'tooltip'} %>
+          <% else %>
+					  <%= link_to 'Delete', delete_study_file_study_path(@study._id, study_file._id, target: '#metadata_form'), method: :delete, class: 'btn btn-block btn-danger delete-file', data: {remote: true} %>
+          <% end %>
 				</div>
 			</div>
 		</div>

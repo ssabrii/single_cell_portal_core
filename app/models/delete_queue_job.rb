@@ -43,11 +43,12 @@ class DeleteQueueJob < Struct.new(:object)
           when 'Coordinate Labels'
             DataArray.where(study_file_id: object.id, study_id: study.id).delete_all
           when 'Expression Matrix'
-            ExpressionScore.where(study_file_id: object.id, study_id: study.id).delete_all
+            Gene.where(study_file_id: object.id, study_id: study.id).delete_all
             DataArray.where(study_file_id: object.id, study_id: study.id).delete_all
             study.set_gene_count
           when 'Metadata'
-            StudyMetadatum.where(study_file_id: object.id, study_id: study.id).delete_all
+            CellMetadatum.where(study_file_id: object.id, study_id: study.id).delete_all
+            DataArray.where(study_file_id: object.id, study_id: study.id).delete_all
             study.update(cell_count: 0)
           when 'Gene List'
             PrecomputedScore.where(study_file_id: object.id, study_id: study.id).delete_all
@@ -60,7 +61,7 @@ class DeleteQueueJob < Struct.new(:object)
         object.update!(queued_for_deletion: true, upload_file_name: new_name, name: new_name, file_type: nil)
 
         # reset initialized if needed
-        if study.cluster_groups.empty? || study.expression_scores.empty? || study.study_metadata.empty?
+        if study.cluster_groups.empty? || study.genes.empty? || study.cell_metadata.empty?
           study.update!(initialized: false)
         end
       when 'UserAnnotation'

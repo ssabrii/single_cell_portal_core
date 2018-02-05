@@ -23,7 +23,7 @@ class UserAnnotationShare
 
 	validates_uniqueness_of :email, scope: :user_annotation_id
 
-	index({ email: 1, user_annotation_id: 1 }, { unique: true })
+	index({ email: 1, user_annotation_id: 1 }, { unique: true, background: true })
 
 	PERMISSION_TYPES = %w(Edit View)
 

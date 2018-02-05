@@ -24,7 +24,7 @@ class DirectoryListing
 
 	validates_uniqueness_of :name, scope: [:study_id, :file_type]
 
-	index({ name: 1, study_id: 1, file_type: 1 }, { unique: true })
+	index({ name: 1, study_id: 1, file_type: 1 }, { unique: true, background: true })
 
 	# check if a directory_listing has a file
 	def has_file?(filename)

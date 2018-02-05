@@ -72,7 +72,7 @@ class StudyFile
   after_save          :set_cluster_group_ranges
 
   has_mongoid_attached_file :upload,
-                            :path => ":rails_root/data/:data_dir/:filename",
+                            :path => ":rails_root/data/:data_dir/:id/:filename",
                             :url => ''
 
   # turning off validation to allow any kind of data file to be uploaded
@@ -93,9 +93,9 @@ class StudyFile
       self.human_fastq_url
     else
       if self.study.public?
-        download_file_path(self.study.url_safe_name, filename: self.download_location)
+        download_file_path(self.study.url_safe_name, filename: self.bucket_location)
       else
-        download_private_file_path(self.study.url_safe_name, filename: self.download_location)
+        download_private_file_path(self.study.url_safe_name, filename: self.bucket_location)
       end
     end
   end
@@ -120,6 +120,10 @@ class StudyFile
     self.parse_status == 'parsed'
   end
 
+  def parsing?
+    self.parse_status == 'parsing'
+  end
+
   # file type as a css class
   def file_type_class
     self.file_type.downcase.split.join('-') + '-file'
@@ -127,7 +131,7 @@ class StudyFile
 
   # generate a gs-url to this study file in the study's GCS bucket
   def gs_url
-    "gs://#{self.study.bucket_id}/#{self.download_location}"
+    "gs://#{self.study.bucket_id}/#{self.bucket_location}"
   end
 
   # convert all domain ranges from floats to integers
@@ -161,8 +165,13 @@ class StudyFile
     end
   end
 
-  # for constructing a path to a file in a Google bucket (takes folders into account due to issue with upload_file_name not allowing slashes)
+  # end path for a file when localizing during a parse
   def download_location
+    self.remote_location.blank? ? File.join(self.id, self.upload_file_name) : self.remote_location
+  end
+
+  # for constructing a path to a file in a Google bucket
+  def bucket_location
     self.remote_location.blank? ? self.upload_file_name : self.remote_location
   end
 
@@ -267,6 +276,16 @@ class StudyFile
       Rails.logger.info "#{Time.now} #{file.name} successfully deleted."
     end
     true
+  end
+
+  # remove a local copy on the file system if a parse fails
+  def remove_local_copy
+    Dir.chdir(self.study.data_store_path)
+    File.delete(self.download_location)
+    subdir = self.remote_location.blank? ? self.id : self.remote_location.split('/').first
+    if Dir.exist?(subdir)
+      Dir.rmdir(subdir)
+    end
   end
 
   private

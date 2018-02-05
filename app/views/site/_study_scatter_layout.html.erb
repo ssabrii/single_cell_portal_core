@@ -1,5 +1,9 @@
 var size = $('#cluster-plot').actual('width') * SCATTER_RATIO;
 
+if (size < minPlotAreaWidth) {
+  size = minPlotAreaWidth;
+}
+
 var layout = {
     hovermode: 'closest',
     font: plotlyLabelFont,

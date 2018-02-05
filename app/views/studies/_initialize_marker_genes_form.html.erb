@@ -4,7 +4,8 @@
   <%= f.hidden_field :_id, value: study_file._id %>
   <%= hidden_field_tag :selector, "#marker_genes_form_#{study_file._id}" %>
   <%= hidden_field_tag :partial, 'initialize_marker_genes_form' %>
-	<div class="form-group row">
+  <%= hidden_field_tag :filename_to_upload, '', class: 'filename-to-upload' %>
+  <div class="form-group row">
 		<div class="col-sm-4">
 			<%= f.label :name %><br />
 			<%= f.text_field :name, class: 'form-control filename gene-list-name', placeholder: 'Enter name of marker list (for display purposes)', autocomplete: 'off' %>
@@ -36,8 +37,12 @@
 					<%= f.submit 'Save', class: 'btn btn-block btn-success save-study-file', disabled: (study_file.upload_file_name.nil? || study_file.parse_status == 'parsing' ) %>
 				</div>
 				<div class="col-xs-6">
-					<%= link_to 'Delete', delete_study_file_study_path(@study._id, study_file._id, target: "#marker_genes_form_#{study_file._id}"), method: :delete, class: 'btn btn-block btn-danger delete-file', data: {remote: true} %>
-				</div>
+          <% if study_file.parsing? || study_file.upload_file_name.nil? %>
+            <%= link_to 'Delete', 'javascript:;', class: 'btn btn-block btn-danger disabled-delete', disabled: 'disabled', title: 'You must wait until the file has finished uploading & parsing before deleting', data: {toggle: 'tooltip'} %>
+          <% else %>
+					  <%= link_to 'Delete', delete_study_file_study_path(@study._id, study_file._id, target: "#marker_genes_form_#{study_file._id}"), method: :delete, class: 'btn btn-block btn-danger delete-file', data: {remote: true} %>
+				  <% end %>
+        </div>
 			</div>
 		</div>
 	</div>
@@ -64,18 +69,24 @@
 				type: 'PATCH',
 				acceptFileTypes: /(\.|\/)(txt|text)$/i,
 				add: function (e, data) {
-					fileUploading = true;
-					var that = this;
-					var fileName = data.files[0].name.replace(/ /g, '_');
-					$.getJSON("<%= resume_upload_study_path %>", { file: fileName }, function (result) {
-						var file = result.file;
-            if (file == null) {
-              $("#study-files-notice-target").html("<%= escape_javascript( render partial: 'studies/study_file_notices', locals: {message: "You have already uploaded this file.  Please select another file."}) %>");
+		  			fileUploading = true;
+	  				var that = this;
+  					var fileName = data.files[0].name.replace(/ /g, '_');
+            $('#marker_genes_form_<%= study_file._id %> .filename-to-upload').val(fileName);
+            canUpload = validateCandidateUpload("#marker_genes_form_<%= study_file._id %>", fileName, $('.initialize_marker_genes_form .filename-to-upload'));
+            if ( canUpload ) {
+                $.getJSON("<%= resume_upload_study_path %>", {file: fileName}, function (result) {
+                    var file = result.file;
+                    if (file == null) {
+                        $("#study-files-notice-target").html("<%= escape_javascript( render partial: 'studies/study_file_notices', locals: {message: "You have already uploaded this file.  Please select another file."}) %>");
+                    } else {
+                        data.uploadedBytes = file && file.size;
+                        $.blueimp.fileupload.prototype.options.add.call(that, e, data);
+                    }
+                });
             } else {
-              data.uploadedBytes = file && file.size;
-              $.blueimp.fileupload.prototype.options.add.call(that, e, data);
+                $('#marker_genes_form_<%= study_file._id %> .filename-to-upload').val('');
             }
-					});
 				},
 				chunkdone: function(e, data) {
 					var perc = parseInt(data.loaded / data.total * 100, 10);

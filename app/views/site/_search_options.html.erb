@@ -1,29 +1,40 @@
-<div id="search-parent" class="panel-group">
+<%= form_for(:search, url: search_genes_path(@study.url_safe_name), html: {class: 'form', id: 'search-genes-form', data: {remote: true}}) do |f| %>
+  <%= f.hidden_field :cluster, value: set_cluster_value(@study, params) %>
+  <%= f.hidden_field :boxpoints, value: params[:boxpoints].nil? ? 'all' : params[:boxpoints] %>
+  <%= f.hidden_field :annotation, value: set_annotation_value(@study, params) %>
+  <%= f.hidden_field :subsample, value: set_subsample_value(params) %>
+  <%= f.hidden_field :plot_type, value: set_distribution_plot_type_value(params) %>
+  <%= f.hidden_field :kernel_type, value: set_kernel_type_value(params) %>
+  <%= f.hidden_field :band_type, value: set_band_type_value(params) %>
+  <%= f.hidden_field :heatmap_row_centering, value: set_heatmap_row_centering_value(params) %>
+  <%= f.hidden_field :heatmap_size, value: set_heatmap_size_value(params) %>
+
+<div id="search-omnibar">
+  <div id="search-omnibar-menu">
+    <i id="search-omnibar-menu-icon" class="fa fa-bars" aria-hidden="true"></i>
+  </div>
+  <div class="input-group">
+    <%= f.autocomplete_field :genes, autocomplete_gene_name_gene_index_path(study_id: @study._id), {multiple: true, class: 'form-control search-genes-input', placeholder: 'Search genes', value: set_search_value, data: {delimiter: ' '}} %>
+    <span class="input-group-btn">
+      <button class="btn btn-default" id="perform-gene-search" type="button">
+        <span class="fa fa-search"></span>
+      </button>
+    </span>
+  </div>
+</div>
+
+<div id="search-parent" class="panel-group" style="display: none;">
   <div class="panel panel-info" id="search-options-panel">
     <div class="panel-heading">
       <div class="panel-title">
-        <h4><a href="#panel-genes-search" data-toggle="collapse" data-parent="#search-parent" id="search-genes-link"><span class='fa fa-search'></span> Search Genes</a></h4>
+        <h4><a href="#panel-genes-search" data-toggle="collapse" data-parent="#search-parent" id="search-genes-link"><span class='fa fa-search'></span> Advanced Gene Search</a></h4>
       </div>
     </div>
     <div class="panel-body collapse in" id="panel-genes-search">
       <div class="row">
         <div class="col-sm-12">
-          <%= form_for(:search, url: search_genes_path(@study.url_safe_name), html: {class: 'form', id: 'search-genes-form', data: {remote: true}}) do |f| %>
-              <%= f.hidden_field :cluster, value: set_cluster_value(@study, params) %>
-              <%= f.hidden_field :boxpoints, value: params[:boxpoints].nil? ? 'all' : params[:boxpoints] %>
-              <%= f.hidden_field :annotation, value: set_annotation_value(@study, params) %>
-              <%= f.hidden_field :subsample, value: set_subsample_value(params) %>
-              <%= f.hidden_field :plot_type, value: set_distribution_plot_type_value(params) %>
-              <%= f.hidden_field :kernel_type, value: set_kernel_type_value(params) %>
-              <%= f.hidden_field :band_type, value: set_band_type_value(params) %>
-              <%= f.hidden_field :heatmap_row_centering, value: set_heatmap_row_centering_value(params) %>
-              <%= f.hidden_field :heatmap_size, value: set_heatmap_size_value(params) %>
               <div class="form-group">
-                <%= f.label :genes, 'Search for genes' %>
-                <%= f.autocomplete_field :genes, autocomplete_expression_score_gene_expression_score_index_path(study_id: @study._id), {multiple: true, class: 'form-control search-genes-input', placeholder: 'Enter gene names', value: set_search_value, data: {delimiter: ' '}} %>
-              </div>
-              <div class="form-group">
-                <%= f.label :upload, "Or upload gene list" %><br/>
+                <%= f.label :upload, "Upload gene list" %><br/>
                 <%= f.file_field :upload, class: 'form-control', accept: '.txt,text/plain' %>
               </div>
               <div class="form-group">
@@ -31,7 +42,6 @@
                 <%= f.select :consensus, options_for_select([['Mean', 'mean'],['Median', 'median']], params[:consensus]), {include_blank: 'None'}, {class: 'form-control'} %>
               </div>
               <%= link_to "<span class='fa fa-chevron-left'></span> Back".html_safe, "javascript:", class: "btn pull-right #{action_name == 'study' ? 'btn-default disabled' : 'btn-warning'}", id: 'clear-gene-search', title: 'Clear gene search and return to cluster scatter plots', data: {toggle: 'tooltip'} %>
-              <%= link_to "<span class='fa fa-search'></span> Search".html_safe, "javascript:", class: 'btn btn-success', id: 'perform-gene-search' %>
               <script type="text/javascript">
                   $('#clear-gene-search').click(function(){
                       clearForm('search_genes');

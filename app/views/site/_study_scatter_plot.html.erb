@@ -50,6 +50,18 @@ $("#colorscale").change(function() {
 
 });
 
+// now that we have the legend size, recalculate adding this to the overall size
+var legendW = parseInt($('#cluster-plot g.legend rect.bg').attr('width'));
+var curSize = $('#cluster-plot').actual('width') * SCATTER_RATIO;
+var newWidth = legendW + curSize;
+
+if (newWidth < minPlotAreaWidth) {
+  newWidth = minPlotAreaWidth;
+}
+
+var updatedLayout = {width: newWidth};
+Plotly.relayout('cluster-plot', updatedLayout);
+
 $('#cluster-figure-legend').html("<p class='text-center help-block'><%= escape_javascript(render text: @cluster.study_file.description) %></p>");
 
 // access actual target div, not jQuery object wrapper for relayout event

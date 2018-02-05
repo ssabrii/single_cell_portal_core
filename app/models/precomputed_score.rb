@@ -15,7 +15,7 @@ class PrecomputedScore
 	field :clusters, type: Array
 	field :gene_scores, type: Array
 
-	index({ study_id: 1 }, { unique: false })
+	index({ study_id: 1 }, { unique: false, background: true })
 
   validates_uniqueness_of :name, scope: :study_id
   validates_presence_of :name, :clusters, :gene_scores

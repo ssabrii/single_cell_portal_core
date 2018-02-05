@@ -42,7 +42,7 @@ class UserAnnotation
 
   accepts_nested_attributes_for :user_annotation_shares, allow_destroy: true, reject_if: proc { |attributes| attributes['email'].blank? }
 
-  index({ user_id: 1, study_id: 1, cluster_group_id: 1, name: 1}, { unique: true })
+  index({ user_id: 1, study_id: 1, cluster_group_id: 1, name: 1}, { unique: true, background: true })
 
   ###
   #
@@ -405,7 +405,13 @@ class UserAnnotation
       if cluster.update(cell_annotations: cluster_annotations)
         Rails.logger.info "#{Time.now}: #{cluster.name} in study: #{cluster.study.name} successfully updated, creating new source file"
         # Create new file
+        study = self.study
         study_file = cluster.study_file
+        # make new subdirectory for file
+        subdir = File.join(study.data_store_path, study_file.id)
+        if !Dir.exists?(subdir)
+          FileUtils.mkdir_p(subdir)
+        end
         new_file = File.new(study_file.upload.path, 'w+')
 
         # Write headers and types
@@ -427,7 +433,8 @@ class UserAnnotation
         new_file.close
 
         # push to FC
-        study = self.study
+
+        Rails.logger.info "#{Time.now}: new source file for #{cluster.name} in study: #{cluster.study.name} successfully created, pushing to FireCloud"
         study.send_to_firecloud(study_file)
 
         # queue jobs to delete annotation caches & annotation itself

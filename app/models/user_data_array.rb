@@ -25,10 +25,10 @@ class UserDataArray
 
   index({ name: 1, user_annotation_id: 1, user_id: 1, study_id: 1, cluster_group_id: 1, cluster_name: 1,
           array_type: 1, array_index: 1, subsample_threshold: 1, subsample_annotation: 1 },
-        { unique: true, name: 'unique_user_data_arrays_index' })
+        { unique: true, name: 'unique_user_data_arrays_index', background: true })
 
-  index({ user_id: 1 }, { unique: false })
-  index({ study_id: 1, user_id: 1}, { unique: false })
+  index({ user_id: 1 }, { unique: false, background: true })
+  index({ study_id: 1, user_id: 1}, { unique: false, background: true })
 
   validates_presence_of :name, :user_id, :cluster_name, :array_type, :array_index, :values
   validates_uniqueness_of :name, scope: [:user_annotation_id, :study_id, :user_id, :cluster_name, :cluster_group_id, :array_type, :array_index, :subsample_threshold, :subsample_annotation]

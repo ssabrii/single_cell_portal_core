@@ -1,5 +1,9 @@
 var size = $('#box-plot').actual('width') * SCATTER_RATIO;
 
+if (size < minPlotAreaWidth) {
+  size = minPlotAreaWidth;
+}
+
 var expressionLayout = {
   hovermode: 'closest',
   font: plotlyLabelFont,

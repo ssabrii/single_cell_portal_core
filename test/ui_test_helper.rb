@@ -186,17 +186,8 @@ class Test::Unit::TestCase
     google_auth = @driver.find_element(:id, 'google-auth')
     google_auth.click
     $verbose ? puts('logging in as ' + email) : nil
-    email_field = @driver.find_element(:id, 'identifierId')
-    email_field.send_key(email)
-    sleep(0.5) # this lets the animation complete
-    email_next = @driver.find_element(:id, 'identifierNext')
-    email_next.click
-    sleep(0.5) # this lets the animation complete
-    password_field = @driver.find_element(:name, 'password')
-    password_field.send_key(password)
-    sleep(0.5) # this lets the animation complete
-    password_next = @driver.find_element(:id, 'passwordNext')
-    password_next.click
+    # fill out login form
+    complete_login_process(email, password)
     # wait for redirect to finish by checking for footer element
     @not_loaded = true
     while @not_loaded == true
@@ -242,20 +233,8 @@ class Test::Unit::TestCase
     use_new.click
     wait_for_render(:id, 'identifierId')
     sleep(1)
-    email_field = @driver.find_element(:id, 'identifierId')
-    # gotcha to clear out any stored value
-    email_field.clear
-    email_field.send_key(email)
-    sleep(0.5) # this lets the animation complete
-    email_next = @driver.find_element(:id, 'identifierNext')
-    email_next.click
-    password_field = @driver.find_element(:name, 'password')
-    sleep(0.5)
-    password_field.clear
-    password_field.send_key(password)
-    sleep(0.5) # this lets the animation complete
-    password_next = @driver.find_element(:id, 'passwordNext')
-    password_next.click
+    # fill out login form
+    complete_login_process(email, password)
     # wait for redirect to finish by checking for footer element
     @not_loaded = true
     while @not_loaded == true
@@ -379,5 +358,33 @@ class Test::Unit::TestCase
       # delete matching files
       Dir.glob("#{$download_dir}/*").select {|f| /#{basename}/.match(f)}.map {|f| File.delete(f)}
     end
+  end
+
+  private
+
+  def complete_login_process(email, password)
+    if !element_visible?(:id, 'identifierId')
+      sleep 1
+    end
+    email_field = @driver.find_element(:id, 'identifierId')
+    email_field.send_key(email)
+    sleep(0.5) # this lets the animation complete
+    if !element_visible?(:id, 'identifierNext')
+      sleep 1
+    end
+    email_next = @driver.find_element(:id, 'identifierNext')
+    email_next.click
+    sleep(0.5) # this lets the animation complete
+    if !element_visible?(:name, 'password')
+      sleep 1
+    end
+    password_field = @driver.find_element(:name, 'password')
+    password_field.send_key(password)
+    sleep(0.5) # this lets the animation complete
+    if !element_visible?(:id, 'passwordNext')
+      sleep 1
+    end
+    password_next = @driver.find_element(:id, 'passwordNext')
+    password_next.click
   end
 end

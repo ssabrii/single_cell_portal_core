@@ -89,6 +89,26 @@ class Study
     end
   end
 
+  has_many :genes, dependent: :delete do
+    def by_name(gene_name, study_file_ids)
+      found_scores = any_of({name: gene_name, :study_file_id.in => study_file_ids}, {searchable_name: gene_name.downcase, :study_file_id.in => study_file_ids}).to_a
+      if found_scores.empty?
+        return []
+      else
+        # since we can have duplicate genes but not cells, merge into one object for rendering
+        merged_scores = {'searchable_name' => gene_name.downcase, 'name' => gene_name, 'scores' => {}}
+        found_scores.each do |score|
+          merged_scores['scores'].merge!(score.scores)
+        end
+        return [merged_scores]
+      end
+    end
+
+    def unique_genes
+      pluck(:name).uniq
+    end
+  end
+
   has_many :precomputed_scores, dependent: :delete do
     def by_name(name)
       where(name: name).first
@@ -119,15 +139,21 @@ class Study
     end
   end
 
-  has_many :data_arrays, dependent: :delete do
+  has_many :data_arrays, as: :linear_data, dependent: :delete do
     def by_name_and_type(name, type)
-      where(name: name, array_type: type).order_by(&:array_index).to_a
+      where(name: name, array_type: type).order_by(&:array_index)
     end
   end
 
   has_many :study_metadata, dependent: :delete do
     def by_name_and_type(name, type)
       where(name: name, annotation_type: type).to_a
+    end
+  end
+
+  has_many :cell_metadata, dependent: :delete do
+    def by_name_and_type(name, type)
+      where(name: name, annotation_type: type).first
     end
   end
 
@@ -222,7 +248,7 @@ class Study
   after_destroy     :remove_data_dir
 
   # search definitions
-  index({"name" => "text", "description" => "text"})
+  index({"name" => "text", "description" => "text"}, {background: true})
 
   ###
   #
@@ -495,20 +521,15 @@ class Study
   ###
 
   # helper method to get number of unique single cells
-  def set_cell_count(file_type)
-    @cell_count = 0
-    case file_type
-      when 'Metadata'
-        metadata_name, metadata_type = StudyMetadatum.where(study_id: self.id).pluck(:name, :annotation_type).flatten
-        @cell_count = self.study_metadata_values(metadata_name, metadata_type).keys.size
-    end
+  def set_cell_count
+    @cell_count = self.all_cells_array.size
     self.update!(cell_count: @cell_count)
     Rails.logger.info "#{Time.now}: Setting cell count in #{self.name} to #{@cell_count}"
   end
 
   # helper method to set the number of unique genes in this study
   def set_gene_count
-    gene_count = self.expression_scores.pluck(:gene).uniq.count
+    gene_count = self.genes.pluck(:name).uniq.count
     Rails.logger.info "#{Time.now}: setting gene count in #{self.name} to #{gene_count}"
     self.update!(gene_count: gene_count)
   end
@@ -543,7 +564,38 @@ class Study
 
   # return an array of all single cell names in study
   def all_cells
-    self.study_metadata.first.cell_annotations.keys
+    annot = self.study_metadata.first
+    if annot.present?
+      annot.cell_annotations.keys
+    else
+      []
+    end
+  end
+
+  # return an array of all single cell names in study, will check for master list of cells or concatenate all
+  # cell lists from individual expression matrices
+  def all_cells_array
+    vals = []
+    if self.data_arrays.where(name: 'All Cells').exists?
+      self.data_arrays.by_name_and_type('All Cells', 'cells').each do |array|
+        vals += array.values
+      end
+    else
+      vals = self.all_expression_matrix_cells
+    end
+    vals
+  end
+
+  # return an array of all cell names that have been used in expression matrices (does not get cells from cell metadata file)
+  def all_expression_matrix_cells
+    vals = []
+    self.expression_matrix_files.each do |file|
+      arrays = self.data_arrays.by_name_and_type("#{file.name} Cells", 'cells').order_by(&:array_index)
+      arrays.each do |array|
+        vals += array.values
+      end
+    end
+    vals
   end
 
   # return a hash keyed by cell name of the requested study_metadata values
@@ -617,9 +669,9 @@ class Study
     studies = self.where(queued_for_deletion: true)
     studies.each do |study|
       Rails.logger.info "#{Time.now}: deleting queued study #{study.name}"
-      ExpressionScore.where(study_id: study.id).delete_all
+      Gene.where(study_id: study.id).delete_all
       DataArray.where(study_id: study.id).delete_all
-      StudyMetadatum.where(study_id: study.id).delete_all
+      CellMetadatum.where(study_id: study.id).delete_all
       PrecomputedScore.where(study_id: study.id).delete_all
       ClusterGroup.where(study_id: study.id).delete_all
       StudyFile.where(study_id: study.id).delete_all
@@ -714,7 +766,7 @@ class Study
       puts "Performing check for '#{study.name}'"
       puts "Beginning with study_files"
       # begin with study_files
-      files = study.study_files.where(queued_for_deletion: false, human_data: false).to_a
+      files = study.study_files.where(queued_for_deletion: false, human_data: false, :parse_status.ne => 'parsing', status: 'uploaded')
       files.each do |file|
         file_location = file.remote_location.blank? ? file.upload_file_name : file.remote_location
         puts "Checking file: #{file_location}"
@@ -784,9 +836,10 @@ class Study
 
   # method to parse master expression scores file for study and populate collection
   # this parser assumes the data is a non-sparse square matrix
-  def initialize_expression_scores(expression_file, user, opts={local: true})
+  def initialize_gene_expression_data(expression_file, user, opts={local: true})
     begin
       @count = 0
+      @child_count = 0
       @message = []
       @last_line = ""
       start_time = Time.now
@@ -804,7 +857,8 @@ class Study
 
       # next, check if this is a re-parse job, in which case we need to remove all existing entries first
       if opts[:reparse]
-        self.expression_scores.delete_all
+        self.genes.where(study_file_id: expression_file.id).delete_all
+        self.data_arrays.where(study_file_id: expression_file.id).delete_all
         expression_file.invalidate_cache_by_file_type
       end
 
@@ -812,10 +866,10 @@ class Study
       content_type = expression_file.determine_content_type
       # validate headers
       if content_type == 'application/gzip'
-        Rails.logger.info "#{Time.now}: Parsing #{expression_file.name} as application/gzip"
+        Rails.logger.info "#{Time.now}: Parsing #{expression_file.name}:#{expression_file.id} as application/gzip"
         file = Zlib::GzipReader.open(@file_location)
       else
-        Rails.logger.info "#{Time.now}: Parsing #{expression_file.name} as text/plain"
+        Rails.logger.info "#{Time.now}: Parsing #{expression_file.name}:#{expression_file.id} as text/plain"
         file = File.open(@file_location, 'rb')
       end
       cells = file.readline.split(/[\t,]/).map(&:strip)
@@ -835,6 +889,7 @@ class Study
     rescue => e
       error_message = "Unexpected error: #{e.message}"
       filename = expression_file.name
+      expression_file.remove_local_copy
       expression_file.destroy
       Rails.logger.info Time.now.to_s + ': ' + error_message
       SingleCellMailer.notify_user_parse_fail(user.email, "Expression file: '#{filename}' parse has failed", error_message).deliver_now
@@ -845,6 +900,7 @@ class Study
     if @validation_error
       error_message = "file header validation failed: first header should be GENE or blank followed by cell names"
       filename = expression_file.name
+      expression_file.remove_local_copy
       expression_file.destroy
       Rails.logger.info Time.now.to_s + ': ' + error_message
       SingleCellMailer.notify_user_parse_fail(user.email, "Expression file: '#{filename}' parse has failed", error_message).deliver_now
@@ -853,7 +909,7 @@ class Study
 
     # begin parse
     begin
-      Rails.logger.info "#{Time.now}: Beginning expression score parse from #{expression_file.name} for #{self.name}"
+      Rails.logger.info "#{Time.now}: Beginning expression matrix parse from #{expression_file.name}:#{expression_file.id} for #{self.name}"
       expression_file.update(parse_status: 'parsing')
       # open data file and grab header row with name of all cells, deleting 'GENE' at start
       # determine proper reader
@@ -872,21 +928,22 @@ class Study
       end
 
       # validate that new expression matrix does not have repeated cells, raise error if repeats found
-      existing_cells = self.data_arrays.by_name_and_type('All Cells', 'cells').map(&:values).flatten
+      existing_cells = self.all_expression_matrix_cells
       uniques = cells - existing_cells
 
       unless uniques.size == cells.size
         repeats = cells - uniques
-        raise StandardError, "cell names validation failed; repeated cells were found: #{repeats.join(', ')}"
+        raise StandardError, "You have re-used the following cell names that were found in another expression matrix in your study (cell names must be unique across all expression matrices): #{repeats.join(', ')}"
       end
 
       # store study id for later to save memory
       study_id = self._id
       @records = []
+      @child_records = []
       # keep a running record of genes already parsed to catch validation errors before they happen
       # this is needed since we're creating records in batch and won't know which gene was responsible
       @genes_parsed = []
-      Rails.logger.info "#{Time.now}: Expression scores loaded, starting record creation for #{self.name}"
+      Rails.logger.info "#{Time.now}: Expression data loaded, starting record creation for #{self.name}"
       while !expression_data.eof?
         # grab single row of scores, parse out gene name at beginning
         line = expression_data.readline.strip.encode('UTF-8', invalid: :replace, undef: :replace, replace: '')
@@ -908,6 +965,10 @@ class Study
             @genes_parsed << gene_name
           end
 
+          new_gene = Gene.new(name: gene_name, searchable_name: gene_name.downcase, study_file_id: expression_file._id,
+                              study_id: self.id)
+          @records << new_gene.attributes
+
           # convert all remaining strings to floats, then store only significant values (!= 0)
           scores = row.map(&:to_f)
           significant_scores = {}
@@ -916,20 +977,62 @@ class Study
               significant_scores[cells[index]] = score
             end
           end
-          # create expression score object
-          @records << {gene: gene_name, searchable_gene: gene_name.downcase, scores: significant_scores, study_id: study_id, study_file_id: expression_file._id}
-          @count += 1
-          if @count % 1000 == 0
-            ExpressionScore.create(@records)
+          signification_cells = significant_scores.keys
+          signification_exp_values = significant_scores.values
+
+          # chunk cells & values into pieces as necessary
+          signification_cells.each_slice(DataArray::MAX_ENTRIES).with_index do |slice, index|
+            # create array of all cells for study, send the object attributes rather than the object for bulk insertion
+            cell_array = DataArray.new(name: new_gene.cell_key, cluster_name: expression_file.name, array_type: 'cells',
+                                       array_index: index + 1, study_file_id: expression_file._id, values: slice,
+                                       linear_data_type: 'Gene', linear_data_id: new_gene.id, study_id: self.id)
+            @child_records << cell_array.attributes
+          end
+
+          signification_exp_values.each_slice(DataArray::MAX_ENTRIES).with_index do |slice, index|
+            # create array of all cells for study, sending the object attributes rather than the object for bulk insertion
+            score_array = DataArray.new(name: new_gene.score_key, cluster_name: expression_file.name, array_type: 'expression',
+                                        array_index: index + 1, study_file_id: expression_file._id, values: slice,
+                                        linear_data_type: 'Gene', linear_data_id: new_gene.id, study_id: self.id)
+            @child_records << score_array.attributes
+          end
+
+          # batch insert records in groups of 1000
+          if @records.size % 1000 == 0
+            Gene.create(@records)
+            @count += @records.size
+            Rails.logger.info "#{Time.now}: Processed #{@count} genes from #{expression_file.name}:#{expression_file.id} for #{self.name}"
             @records = []
-            Rails.logger.info "Processed #{@count} expression scores from #{expression_file.name} for #{self.name}"
+          end
+
+          if @child_records.size >= 1000
+            DataArray.create!(@child_records)
+            @child_count += @child_records.size
+            Rails.logger.info "#{Time.now}: Processed #{@child_count} child data arrays from #{expression_file.name}:#{expression_file.id} for #{self.name}"
+            @child_records = []
           end
         end
       end
-      Rails.logger.info "#{Time.now}: Creating last #{@records.size} expression scores from #{expression_file.name} for #{self.name}"
-      ExpressionScore.create!(@records)
 
-      # launch job to set gene count
+      Gene.create(@records)
+      @count += @records.size
+      Rails.logger.info "#{Time.now}: Processed #{@count} genes from #{expression_file.name}:#{expression_file.id} for #{self.name}"
+      @records = nil
+
+      DataArray.create(@child_records)
+      @child_count += @child_records.size
+      Rails.logger.info "#{Time.now}: Processed #{@child_count} child data arrays from #{expression_file.name}:#{expression_file.id} for #{self.name}"
+      @child_records = nil
+
+      # add processed cells to known cells
+      cells.each_slice(DataArray::MAX_ENTRIES).with_index do |slice, index|
+        Rails.logger.info "#{Time.now}: Create known cells array ##{index + 1} for #{expression_file.name}:#{expression_file.id} in #{self.name}"
+        known_cells = self.data_arrays.build(name: "#{expression_file.name} Cells", cluster_name: expression_file.name,
+                                             array_type: 'cells', array_index: index + 1, values: slice,
+                                             study_file_id: expression_file.id, study_id: self.id)
+        known_cells.save
+      end
+
       self.set_gene_count
 
       # set the default expression label if the user supplied one
@@ -937,14 +1040,6 @@ class Study
         Rails.logger.info "#{Time.now}: Setting default expression label in #{self.name} to '#{expression_file.y_axis_label}'"
         opts = self.default_options
         self.update!(default_options: opts.merge(expression_label: expression_file.y_axis_label))
-      end
-
-      # chunk into pieces as necessary
-      cells.each_slice(DataArray::MAX_ENTRIES).with_index do |slice, index|
-        # create array of all cells for study
-        @cell_data_array = self.data_arrays.build(name: 'All Cells', cluster_name: expression_file.name, array_type: 'cells', array_index: index + 1, study_file_id: expression_file._id, cluster_group_id: expression_file._id, values: slice)
-        Rails.logger.info "#{Time.now}: Saving all cells data array ##{@cell_data_array.array_index} using #{expression_file.name} for #{self.name}"
-        @cell_data_array.save!
       end
 
       # clean up, print stats
@@ -958,7 +1053,7 @@ class Study
       @message << "Total Time: #{time.first} minutes, #{time.last} seconds"
       Rails.logger.info @message.join("\n")
       # set initialized to true if possible
-      if self.cluster_ordinations_files.any? && !self.metadata_file.nil? && !self.initialized?
+      if self.cluster_groups.any? && self.cell_metadata.any? && !self.initialized?
         Rails.logger.info "#{Time.now}: initializing #{self.name}"
         self.update!(initialized: true)
         Rails.logger.info "#{Time.now}: #{self.name} successfully initialized"
@@ -970,36 +1065,42 @@ class Study
         Rails.logger.error "#{Time.now}: Unable to deliver email: #{e.message}"
       end
 
-      Rails.logger.info "#{Time.now}: determining upload status of expression file: #{expression_file.upload_file_name}"
+      Rails.logger.info "#{Time.now}: determining upload status of expression file: #{expression_file.upload_file_name}:#{expression_file.id}"
       # now that parsing is complete, we can move file into storage bucket and delete local (unless we downloaded from FireCloud to begin with)
-      if opts[:local]
+      # rather than relying on opts[:local], actually check if the file is already in the GCS bucket
+      destination = expression_file.remote_location.blank? ? expression_file.upload_file_name : expression_file.remote_location
+      remote = Study.firecloud_client.get_workspace_file(self.firecloud_project, self.firecloud_workspace, destination)
+      if remote.nil?
         begin
-          Rails.logger.info "#{Time.now}: preparing to upload expression file: #{expression_file.upload_file_name} to FireCloud"
+          Rails.logger.info "#{Time.now}: preparing to upload expression file: #{expression_file.upload_file_name}:#{expression_file.id} to FireCloud"
           self.send_to_firecloud(expression_file)
         rescue => e
-          Rails.logger.info "#{Time.now}: Expression file: #{expression_file.upload_file_name} failed to upload to FireCloud due to #{e.message}"
+          Rails.logger.info "#{Time.now}: Expression file: #{expression_file.upload_file_name}:#{expression_file.id} failed to upload to FireCloud due to #{e.message}"
           SingleCellMailer.notify_admin_upload_fail(expression_file, e.message).deliver_now
         end
       else
         # we have the file in FireCloud already, so just delete it
         begin
-          Rails.logger.info "#{Time.now}: deleting local file #{expression_file.upload_file_name} after successful parse; file already exists in #{self.bucket_id}"
-          File.delete(@file_location)
+          Rails.logger.info "#{Time.now}: found remote version of #{expression_file.upload_file_name}: #{remote.name} (#{remote.generation})"
+          run_at = 15.seconds.from_now
+          Delayed::Job.enqueue(UploadCleanupJob.new(self, expression_file), run_at: run_at)
+          Rails.logger.info "#{Time.now}: cleanup job for #{expression_file.upload_file_name}:#{expression_file.id} scheduled for #{run_at}"
         rescue => e
           # we don't really care if the delete fails, we can always manually remove it later as the file is in FireCloud already
-          Rails.logger.error "#{Time.now}: Could not delete #{expression_file.name} in study #{self.name}; aborting"
+          Rails.logger.error "#{Time.now}: Could not delete #{expression_file.name}:#{expression_file.id} in study #{self.name}; aborting"
           SingleCellMailer.admin_notification('Local file deletion failed', nil, "The file at #{@file_location} failed to clean up after parsing, please remove.").deliver_now
         end
       end
     rescue => e
       # error has occurred, so clean up records and remove file
-      ExpressionScore.where(study_id: self.id, study_file_id: expression_file.id).delete_all
+      Gene.where(study_id: self.id, study_file_id: expression_file.id).delete_all
       DataArray.where(study_id: self.id, study_file_id: expression_file.id).delete_all
       filename = expression_file.name
+      expression_file.remove_local_copy
       expression_file.destroy
       error_message = "#{@last_line}: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
-      SingleCellMailer.notify_user_parse_fail(user.email, "Expression file: '#{filename}' parse has failed", error_message).deliver_now
+      SingleCellMailer.notify_user_parse_fail(user.email, "Gene Expression matrix: '#{filename}' parse has failed", error_message).deliver_now
     end
     true
   end
@@ -1029,10 +1130,10 @@ class Study
       content_type = ordinations_file.determine_content_type
       # validate headers
       if content_type == 'application/gzip'
-        Rails.logger.info "#{Time.now}: Parsing #{ordinations_file.name} as application/gzip"
+        Rails.logger.info "#{Time.now}: Parsing #{ordinations_file.name}:#{ordinations_file.id} as application/gzip"
         d_file = Zlib::GzipReader.open(@file_location)
       else
-        Rails.logger.info "#{Time.now}: Parsing #{ordinations_file.name} as text/plain"
+        Rails.logger.info "#{Time.now}: Parsing #{ordinations_file.name}:#{ordinations_file.id} as text/plain"
         d_file = File.open(@file_location, 'rb')
       end
 
@@ -1053,6 +1154,7 @@ class Study
       error_message = "#{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
       filename = ordinations_file.upload_file_name
+      ordinations_file.remove_local_copy
       ordinations_file.destroy
       SingleCellMailer.notify_user_parse_fail(user.email, "Cluster file: '#{filename}' parse has failed", error_message).deliver_now
       raise StandardError, error_message
@@ -1063,6 +1165,7 @@ class Study
       error_message = "file header validation failed: should be at least NAME, X, Y with second line starting with TYPE"
       Rails.logger.info Time.now.to_s + ': ' + error_message
       filename = ordinations_file.upload_file_name
+      ordinations_file.remote_local_copy
       ordinations_file.destroy
       SingleCellMailer.notify_user_parse_fail(user.email, "Cluster file: '#{filename}' parse has failed", error_message).deliver_now
       raise StandardError, error_message
@@ -1074,7 +1177,7 @@ class Study
     # begin parse
     begin
       cluster_name = ordinations_file.name
-      Rails.logger.info "#{Time.now}: Beginning cluster initialization using #{ordinations_file.upload_file_name} for cluster: #{cluster_name} in #{self.name}"
+      Rails.logger.info "#{Time.now}: Beginning cluster initialization using #{ordinations_file.upload_file_name}:#{ordinations_file.id} for cluster: #{cluster_name} in #{self.name}"
       ordinations_file.update(parse_status: 'parsing')
 
       if content_type == 'application/gzip'
@@ -1151,16 +1254,27 @@ class Study
       # container to store temporary data arrays until ready to save
       @data_arrays = []
       # create required data_arrays (name, x, y)
-      @data_arrays[name_index] = self.data_arrays.build(name: 'text', cluster_name: cluster_name, array_type: 'cells', array_index: 1, study_file_id: ordinations_file._id, cluster_group_id: @cluster_group._id, values: [])
-      @data_arrays[x_index] = self.data_arrays.build(name: 'x', cluster_name: cluster_name, array_type: 'coordinates', array_index: 1, study_file_id: ordinations_file._id, cluster_group_id: @cluster_group._id, values: [])
-      @data_arrays[y_index] = self.data_arrays.build(name: 'y', cluster_name: cluster_name, array_type: 'coordinates', array_index: 1, study_file_id: ordinations_file._id, cluster_group_id: @cluster_group._id, values: [])
+      @data_arrays[name_index] = @cluster_group.data_arrays.build(name: 'text', cluster_name: cluster_name, array_type: 'cells',
+                                                                  array_index: 1, study_file_id: ordinations_file._id,
+                                                                  study_id: self.id, values: [])
+      @data_arrays[x_index] = @cluster_group.data_arrays.build(name: 'x', cluster_name: cluster_name, array_type: 'coordinates',
+                                                               array_index: 1, study_file_id: ordinations_file._id,
+                                                               study_id: self.id, values: [])
+      @data_arrays[y_index] = @cluster_group.data_arrays.build(name: 'y', cluster_name: cluster_name, array_type: 'coordinates',
+                                                               array_index: 1, study_file_id: ordinations_file._id,
+                                                               study_id: self.id, values: [])
 
       # add optional data arrays (z, metadata)
       if is_3d
-        @data_arrays[z_index] = self.data_arrays.build(name: 'z', cluster_name: cluster_name, array_type: 'coordinates', array_index: 1, study_file_id: ordinations_file._id, cluster_group_id: @cluster_group._id, values: [])
+        @data_arrays[z_index] = @cluster_group.data_arrays.build(name: 'z', cluster_name: cluster_name, array_type: 'coordinates',
+                                                               array_index: 1, study_file_id: ordinations_file._id,
+                                                               study_id: self.id, values: [])
       end
       @cluster_metadata.each do |metadata|
-        @data_arrays[metadata[:index]] = self.data_arrays.build(name: metadata[:name], cluster_name: cluster_name, array_type: 'annotations', array_index: 1, study_file_id: ordinations_file._id, cluster_group_id: @cluster_group._id, values: [])
+        @data_arrays[metadata[:index]] = @cluster_group.data_arrays.build(name: metadata[:name], cluster_name: cluster_name,
+                                                                          array_type: 'annotations', array_index: 1,
+                                                                          study_file_id: ordinations_file._id,
+                                                                          study_id: self.id, values: [])
       end
 
       Rails.logger.info "#{Time.now}: Headers/Metadata loaded for cluster initialization using #{ordinations_file.upload_file_name} for cluster: #{cluster_name} in #{self.name}"
@@ -1181,9 +1295,11 @@ class Study
               # of same name & type with array_index incremented by 1
               current_data_array_index = @data_arrays[index].array_index
               data_array = @data_arrays[index]
-              Rails.logger.info "#{Time.now}: Saving data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{ordinations_file.upload_file_name} for cluster: #{cluster_name} in #{self.name}"
+              Rails.logger.info "#{Time.now}: Saving data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{ordinations_file.upload_file_name}:#{ordinations_file.id} for cluster: #{cluster_name} in #{self.name}"
               data_array.save
-              new_data_array = self.data_arrays.build(name: data_array.name, cluster_name: data_array.cluster_name ,array_type: data_array.array_type, array_index: current_data_array_index + 1, study_file_id: ordinations_file._id, cluster_group_id: @cluster_group._id, values: [])
+              new_data_array = @cluster_group.data_arrays.build(name: data_array.name, cluster_name: data_array.cluster_name,
+                                                                array_type: data_array.array_type, array_index: current_data_array_index + 1,
+                                                                study_file_id: ordinations_file._id, study_id: self.id, values: [])
               @data_arrays[index] = new_data_array
             end
             # determine whether or not value needs to be cast as a float or not
@@ -1208,7 +1324,7 @@ class Study
       end
       # clean up
       @data_arrays.each do |data_array|
-        Rails.logger.info "#{Time.now}: Saving data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{ordinations_file.upload_file_name} for cluster: #{cluster_name} in #{self.name}"
+        Rails.logger.info "#{Time.now}: Saving data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{ordinations_file.upload_file_name}:#{ordinations_file.id} for cluster: #{cluster_name} in #{self.name}"
         data_array.save
       end
       cluster_data.close
@@ -1232,7 +1348,7 @@ class Study
       @message << "Total points in cluster: #{@point_count}"
       @message << "Total Time: #{time.first} minutes, #{time.last} seconds"
       # set initialized to true if possible
-      if self.expression_scores.any? && self.study_metadata.any? && !self.initialized?
+      if self.genes.any? && self.cell_metadata.any? && !self.initialized?
         Rails.logger.info "#{Time.now}: initializing #{self.name}"
         self.update!(initialized: true)
         Rails.logger.info "#{Time.now}: #{self.name} successfully initialized"
@@ -1292,25 +1408,29 @@ class Study
         Rails.logger.error "#{Time.now}: Unable to deliver email: #{e.message}"
       end
 
-      Rails.logger.info "#{Time.now}: determining upload status of ordinations file: #{ordinations_file.upload_file_name}"
+      Rails.logger.info "#{Time.now}: determining upload status of ordinations file: #{ordinations_file.upload_file_name}:#{ordinations_file.id}"
 
       # now that parsing is complete, we can move file into storage bucket and delete local (unless we downloaded from FireCloud to begin with)
-      if opts[:local]
+      destination = ordinations_file.remote_location.blank? ? ordinations_file.upload_file_name : ordinations_file.remote_location
+      remote = Study.firecloud_client.get_workspace_file(self.firecloud_project, self.firecloud_workspace, destination)
+      if remote.nil?
         begin
-          Rails.logger.info "#{Time.now}: preparing to upload ordinations file: #{ordinations_file.upload_file_name} to FireCloud"
+          Rails.logger.info "#{Time.now}: preparing to upload ordinations file: #{ordinations_file.upload_file_name}:#{ordinations_file.id} to FireCloud"
           self.send_to_firecloud(ordinations_file)
         rescue => e
-          Rails.logger.info "#{Time.now}: Cluster file: #{ordinations_file.upload_file_name} failed to upload to FireCloud due to #{e.message}"
+          Rails.logger.info "#{Time.now}: Cluster file: #{ordinations_file.upload_file_name}:#{ordinations_file.id} failed to upload to FireCloud due to #{e.message}"
           SingleCellMailer.notify_admin_upload_fail(ordinations_file, e.message).deliver_now
         end
       else
         # we have the file in FireCloud already, so just delete it
         begin
-          Rails.logger.info "#{Time.now}: deleting local file #{ordinations_file.upload_file_name} after successful parse; file already exists in #{self.bucket_id}"
-          File.delete(@file_location)
+          Rails.logger.info "#{Time.now}: found remote version of #{ordinations_file.upload_file_name}: #{remote.name} (#{remote.generation})"
+          run_at = 15.seconds.from_now
+          Delayed::Job.enqueue(UploadCleanupJob.new(self, ordinations_file), run_at: run_at)
+          Rails.logger.info "#{Time.now}: cleanup job for #{ordinations_file.upload_file_name}:#{ordinations_file.id} scheduled for #{run_at}"
         rescue => e
           # we don't really care if the delete fails, we can always manually remove it later as the file is in FireCloud already
-          Rails.logger.error "#{Time.now}: Could not delete #{ordinations_file.name} in study #{self.name}; aborting"
+          Rails.logger.error "#{Time.now}: Could not delete #{ordinations_file.name}:#{ordinations_file.id} in study #{self.name}; aborting"
           SingleCellMailer.admin_notification('Local file deletion failed', nil, "The file at #{@file_location} failed to clean up after parsing, please remove.").deliver_now
         end
       end
@@ -1319,6 +1439,7 @@ class Study
       ClusterGroup.where(study_file_id: ordinations_file.id).delete_all
       DataArray.where(study_file_id: ordinations_file.id).delete_all
       filename = ordinations_file.upload_file_name
+      ordinations_file.remove_local_copy
       ordinations_file.destroy
       error_message = "#{@last_line} ERROR: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
@@ -1350,10 +1471,10 @@ class Study
       content_type = coordinate_file.determine_content_type
       # validate headers
       if content_type == 'application/gzip'
-        Rails.logger.info "#{Time.now}: Parsing #{coordinate_file.name} as application/gzip"
+        Rails.logger.info "#{Time.now}: Parsing #{coordinate_file.name}:#{coordinate_file.id} as application/gzip"
         c_file = Zlib::GzipReader.open(@file_location)
       else
-        Rails.logger.info "#{Time.now}: Parsing #{coordinate_file.name} as text/plain"
+        Rails.logger.info "#{Time.now}: Parsing #{coordinate_file.name}:#{coordinate_file.id} as text/plain"
         c_file = File.open(@file_location, 'rb')
       end
 
@@ -1373,6 +1494,7 @@ class Study
       error_message = "#{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
       filename = coordinate_file.upload_file_name
+      coordinate_file.remove_local_copy
       coordinate_file.destroy
       SingleCellMailer.notify_user_parse_fail(user.email, "Coordinate Labels file: '#{filename}' parse has failed", error_message).deliver_now
       raise StandardError, error_message
@@ -1383,6 +1505,13 @@ class Study
       error_message = "file header validation failed: should be at least NAME, X, Y, LABELS"
       Rails.logger.info Time.now.to_s + ': ' + error_message
       filename = coordinate_file.upload_file_name
+      if File.exist?(@file_location)
+        File.delete(@file_location)
+        if Dir.exist?(File.join(self.data_store_path, coordinate_file.id))
+          Dir.chdir(self.data_store_path)
+          Dir.rmdir(coordinate_file.id)
+        end
+      end
       coordinate_file.destroy
       SingleCellMailer.notify_user_parse_fail(user.email, "Coordinate Labels file: '#{filename}' parse has failed", error_message).deliver_now
       raise StandardError, error_message
@@ -1395,7 +1524,7 @@ class Study
       # load target cluster
       cluster = coordinate_file.coordinate_labels_target
 
-      Rails.logger.info "#{Time.now}: Beginning coordinate label initialization using #{coordinate_file.upload_file_name} for cluster: #{cluster.name} in #{self.name}"
+      Rails.logger.info "#{Time.now}: Beginning coordinate label initialization using #{coordinate_file.upload_file_name}:#{coordinate_file.id} for cluster: #{cluster.name} in #{self.name}"
       coordinate_file.update(parse_status: 'parsing')
 
       if content_type == 'application/gzip'
@@ -1419,16 +1548,24 @@ class Study
       # container to store temporary data arrays until ready to save
       @data_arrays = []
       # create required data_arrays (name, x, y)
-      @data_arrays[x_index] = self.data_arrays.build(name: 'x', cluster_name: cluster.name, array_type: 'labels', array_index: 1, study_file_id: coordinate_file._id, cluster_group_id: cluster._id, values: [])
-      @data_arrays[y_index] = self.data_arrays.build(name: 'y', cluster_name: cluster.name, array_type: 'labels', array_index: 1, study_file_id: coordinate_file._id, cluster_group_id: cluster._id, values: [])
-      @data_arrays[label_index] = self.data_arrays.build(name: 'text', cluster_name: cluster.name, array_type: 'labels', array_index: 1, study_file_id: coordinate_file._id, cluster_group_id: cluster._id, values: [])
+      @data_arrays[x_index] = cluster.data_arrays.build(name: 'x', cluster_name: cluster.name, array_type: 'labels',
+                                                        array_index: 1, study_file_id: coordinate_file._id,
+                                                        study_id: self.id, values: [])
+      @data_arrays[y_index] = cluster.data_arrays.build(name: 'y', cluster_name: cluster.name, array_type: 'labels',
+                                                        array_index: 1, study_file_id: coordinate_file._id,
+                                                        study_id: self.id, values: [])
+      @data_arrays[label_index] = cluster.data_arrays.build(name: 'text', cluster_name: cluster.name, array_type: 'labels',
+                                                            array_index: 1, study_file_id: coordinate_file._id,
+                                                            study_id: self.id, values: [])
 
       # add optional data arrays (z, metadata)
       if is_3d
-        @data_arrays[z_index] = self.data_arrays.build(name: 'z', cluster_name: cluster.name, array_type: 'labels', array_index: 1, study_file_id: coordinate_file._id, cluster_group_id: cluster._id, values: [])
+        @data_arrays[z_index] = self.data_arrays.build(name: 'z', cluster_name: cluster.name, array_type: 'labels',
+                                                       array_index: 1, study_file_id: coordinate_file._id, study_id: self.id,
+                                                       values: [])
       end
 
-      Rails.logger.info "#{Time.now}: Headers/Metadata loaded for coordinate file initialization using #{coordinate_file.upload_file_name} for cluster: #{cluster.name} in #{self.name}"
+      Rails.logger.info "#{Time.now}: Headers/Metadata loaded for coordinate file initialization using #{coordinate_file.upload_file_name}:#{coordinate_file.id} for cluster: #{cluster.name} in #{self.name}"
       # begin reading data
       while !coordinate_data.eof?
         line = coordinate_data.readline.strip.encode('UTF-8', invalid: :replace, undef: :replace, replace: '')
@@ -1445,9 +1582,11 @@ class Study
               # of same name & type with array_index incremented by 1
               current_data_array_index = @data_arrays[index].array_index
               data_array = @data_arrays[index]
-              Rails.logger.info "#{Time.now}: Saving full-lenght data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{coordinate_file.upload_file_name} for cluster: #{cluster.name} in #{self.name}; initializing new array index #{current_data_array_index + 1}"
+              Rails.logger.info "#{Time.now}: Saving full-lenght data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{coordinate_file.upload_file_name}:#{coordinate_file.id} for cluster: #{cluster.name} in #{self.name}; initializing new array index #{current_data_array_index + 1}"
               data_array.save
-              new_data_array = self.data_arrays.build(name: data_array.name, cluster_name: data_array.cluster_name ,array_type: data_array.array_type, array_index: current_data_array_index + 1, study_file_id: coordinate_file._id, cluster_group_id: cluster._id, values: [])
+              new_data_array = cluster.data_arrays.build(name: data_array.name, cluster_name: data_array.cluster_name,
+                                                         array_type: data_array.array_type, array_index: current_data_array_index + 1,
+                                                         study_file_id: coordinate_file._id, study_id: self.id, values: [])
               @data_arrays[index] = new_data_array
             end
             # determine whether or not value needs to be cast as a float or not (only values at label index stay as a string)
@@ -1463,7 +1602,7 @@ class Study
 
       # clean up
       @data_arrays.each do |data_array|
-        Rails.logger.info "#{Time.now}: Saving data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{coordinate_file.upload_file_name} for cluster: #{cluster.name} in #{self.name}"
+        Rails.logger.info "#{Time.now}: Saving data array: #{data_array.name}-#{data_array.array_type}-#{data_array.array_index} using #{coordinate_file.upload_file_name}:#{coordinate_file.id} for cluster: #{cluster.name} in #{self.name}"
         data_array.save
       end
       coordinate_data.close
@@ -1485,25 +1624,29 @@ class Study
         Rails.logger.error "#{Time.now}: Unable to deliver email: #{e.message}"
       end
 
-      Rails.logger.info "#{Time.now}: determining upload status of coordinate labels file: #{coordinate_file.upload_file_name}"
+      Rails.logger.info "#{Time.now}: determining upload status of coordinate labels file: #{coordinate_file.upload_file_name}:#{coordinate_file.id}"
 
       # now that parsing is complete, we can move file into storage bucket and delete local (unless we downloaded from FireCloud to begin with)
-      if opts[:local]
+      destination = coordinate_file.remote_location.blank? ? coordinate_file.upload_file_name : coordinate_file.remote_location
+      remote = Study.firecloud_client.get_workspace_file(self.firecloud_project, self.firecloud_workspace, destination)
+      if remote.nil?
         begin
-          Rails.logger.info "#{Time.now}: preparing to upload ordinations file: #{coordinate_file.upload_file_name} to FireCloud"
+          Rails.logger.info "#{Time.now}: preparing to upload ordinations file: #{coordinate_file.upload_file_name}:#{coordinate_file.id} to FireCloud"
           self.send_to_firecloud(coordinate_file)
         rescue => e
-          Rails.logger.info "#{Time.now}: Cluster file: #{coordinate_file.upload_file_name} failed to upload to FireCloud due to #{e.message}"
+          Rails.logger.info "#{Time.now}: Cluster file: #{coordinate_file.upload_file_name}:#{coordinate_file.id} failed to upload to FireCloud due to #{e.message}"
           SingleCellMailer.notify_admin_upload_fail(coordinate_file, e.message).deliver_now
         end
       else
         # we have the file in FireCloud already, so just delete it
         begin
-          Rails.logger.info "#{Time.now}: deleting local file #{coordinate_file.upload_file_name} after successful parse; file already exists in #{self.bucket_id}"
-          File.delete(@file_location)
+          Rails.logger.info "#{Time.now}: found remote version of #{coordinate_file.upload_file_name}: #{remote.name} (#{remote.generation})"
+          run_at = 15.seconds.from_now
+          Delayed::Job.enqueue(UploadCleanupJob.new(self, coordinate_file), run_at: run_at)
+          Rails.logger.info "#{Time.now}: cleanup job for #{coordinate_file.upload_file_name}:#{coordinate_file.id} scheduled for #{run_at}"
         rescue => e
           # we don't really care if the delete fails, we can always manually remove it later as the file is in FireCloud already
-          Rails.logger.error "#{Time.now}: Could not delete #{coordinate_file.name} in study #{self.name}; aborting"
+          Rails.logger.error "#{Time.now}: Could not delete #{coordinate_file.name}:#{coordinate_file.id} in study #{self.name}; aborting"
           SingleCellMailer.admin_notification('Local file deletion failed', nil, "The file at #{@file_location} failed to clean up after parsing, please remove.").deliver_now
         end
       end
@@ -1511,6 +1654,7 @@ class Study
       # error has occurred, so clean up records and remove file
       DataArray.where(study_file_id: coordinate_file.id).delete_all
       filename = coordinate_file.upload_file_name
+      coordinate_file.remove_local_copy
       coordinate_file.destroy
       error_message = "#{@last_line} ERROR: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
@@ -1519,10 +1663,8 @@ class Study
     end
   end
 
-  # parse a study metadata file and create necessary study_metadata objects
-  # study_metadata objects are hashes that store annotations in cell_name/annotation_value pairs
-  # call @study.study_metadata_values(metadata_name, metadata_type) to return all values as one hash
-  def initialize_study_metadata(metadata_file, user, opts={local: true})
+  # parse a study metadata file and create necessary cell_metadatum objects
+  def initialize_cell_metadata(metadata_file, user, opts={local: true})
     begin
       @file_location = metadata_file.upload.path
       # before anything starts, check if file has been uploaded locally or needs to be pulled down from FireCloud first
@@ -1543,17 +1685,17 @@ class Study
       content_type = metadata_file.determine_content_type
       # validate headers
       if content_type == 'application/gzip'
-        Rails.logger.info "#{Time.now}: Parsing #{metadata_file.name} as application/gzip"
+        Rails.logger.info "#{Time.now}: Parsing #{metadata_file.name}:#{metadata_file.id} as application/gzip"
         m_file = Zlib::GzipReader.open(@file_location)
       else
-        Rails.logger.info "#{Time.now}: Parsing #{metadata_file.name} as text/plain"
+        Rails.logger.info "#{Time.now}: Parsing #{metadata_file.name}:#{metadata_file.id} as text/plain"
         m_file = File.open(@file_location, 'rb')
       end
 
       # validate headers of metadata file
       @validation_error = false
       start_time = Time.now
-      Rails.logger.info "#{Time.now}: Validating metadata file headers for #{metadata_file.name} in #{self.name}"
+      Rails.logger.info "#{Time.now}: Validating metadata file headers for #{metadata_file.name}:#{metadata_file.id} in #{self.name}"
       headers = m_file.readline.split(/[\t,]/).map(&:strip)
       @last_line = "#{metadata_file.name}, line 1"
       second_header = m_file.readline.split(/[\t,]/).map(&:strip)
@@ -1566,6 +1708,7 @@ class Study
       m_file.close
     rescue => e
       filename = metadata_file.upload_file_name
+      metadata_file.remove_local_copy
       metadata_file.destroy
       error_message = "#{@last_line} ERROR: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
@@ -1584,10 +1727,11 @@ class Study
     end
 
     @metadata_records = []
+    @metadata_data_arrays = []
     @message = []
     # begin parse
     begin
-      Rails.logger.info "#{Time.now}: Beginning metadata initialization using #{metadata_file.upload_file_name} in #{self.name}"
+      Rails.logger.info "#{Time.now}: Beginning metadata initialization using #{metadata_file.upload_file_name}:#{metadata_file.id} in #{self.name}"
       metadata_file.update(parse_status: 'parsing')
       # open files for parsing and grab header & type data
       if content_type == 'application/gzip'
@@ -1605,12 +1749,19 @@ class Study
       header_data.each_with_index do |header, index|
         # don't need an object for the cell names, only metadata values
         unless index == name_index
-          m_obj = self.study_metadata.build(name: header, annotation_type: type_data[index], study_file_id: metadata_file._id, cell_annotations: {}, values: [])
+          m_obj = self.cell_metadata.build(name: header, annotation_type: type_data[index], study_file_id: metadata_file._id, values: [])
           @metadata_records[index] = m_obj
+          @metadata_data_arrays[index] = m_obj.data_arrays.build(name: m_obj.name, cluster_name: metadata_file.name,
+                                                                      array_type: 'annotations', array_index: 1,
+                                                                      study_id: self.id, study_file_id: metadata_file.id,
+                                                                      values: [])
         end
       end
 
-      Rails.logger.info "#{Time.now}: Study metadata objects initialized using: #{metadata_file.name} for #{self.name}; beginning parse"
+      # array to hold all cell names
+      all_cells = []
+
+      Rails.logger.info "#{Time.now}: Study metadata objects initialized using: #{metadata_file.name}:#{metadata_file.id} for #{self.name}; beginning parse"
       # read file data
       while !metadata_data.eof?
         line = metadata_data.readline.strip.encode('UTF-8', invalid: :replace, undef: :replace, replace: '')
@@ -1624,42 +1775,65 @@ class Study
           # assign values to correct study_metadata object
           vals.each_with_index do |val, index|
             unless index == name_index
-              if @metadata_records[index].cell_annotations.size >= StudyMetadatum::MAX_ENTRIES
-                # study metadata already has max number of values, so save it and replace it with a new study_metadata of same name & type
+              if @metadata_data_arrays[index].values.size >= DataArray::MAX_ENTRIES
+                # data array already has max number of values, so save it and replace it with a new data_array of same name & type
                 metadata = @metadata_records[index]
-                Rails.logger.info "Saving study metadata: #{metadata.name}-#{metadata.annotation_type} using #{metadata_file.upload_file_name} in #{self.name}"
-                metadata.save
-                new_metadata = self.study_metadata.build(name: metadata.name, annotation_type: metadata.annotation_type, study_file_id: metadata_file._id, cell_annotations: {}, values: [])
-                @metadata_records[index] = new_metadata
+                array = @metadata_data_arrays[index]
+                Rails.logger.info "#{Time.now}: Saving cell metadata data array: #{array.name}-#{array.array_index} using #{metadata_file.upload_file_name}:#{metadata_file.id} in #{self.name}"
+                array.save
+                new_array = metadata.study_metadata.build(name: metadata.name, array_type: 'annotation', cluster_name: metadata_file.name,
+                                                          array_index: array.array_index + 1, study_file_id: metadata_file._id,
+                                                          study_id: self.id, values: [])
+                @metadata_data_arrays[index] = new_array
               end
               # determine whether or not value needs to be cast as a float or not
               if type_data[index] == 'numeric'
-                @metadata_records[index].cell_annotations.merge!({"#{vals[name_index]}" => val.to_f})
+                @metadata_data_arrays[index].values << val.to_f
               else
-                @metadata_records[index].cell_annotations.merge!({"#{vals[name_index]}" => val})
+                @metadata_data_arrays[index].values << val
                 # determine if a new unique value needs to be stored in values array
                 if type_data[index] == 'group' && !@metadata_records[index].values.include?(val)
                   @metadata_records[index].values << val
-                  Rails.logger.info "Adding #{val} to #{@metadata_records[index].name} list of group values for #{header_data[index]}"
+                  Rails.logger.info "#{Time.now}: Adding #{val} to #{@metadata_records[index].name} list of group values for #{header_data[index]}"
                 end
               end
+            else
+              # store the cell name for use later
+              all_cells << val
             end
           end
         end
       end
-      # clean up
+
+      # create all cells arrays
+      all_cells.each_slice(DataArray::MAX_ENTRIES).with_index do |slice, index|
+        Rails.logger.info "#{Time.now}: Create all cells array ##{index + 1} for #{metadata_file.name}:#{metadata_file.id} in #{self.name}"
+        array = self.data_arrays.build(name: "All Cells", cluster_name: metadata_file.name,
+                                             array_type: 'cells', array_index: index + 1, values: slice,
+                                             study_file_id: metadata_file.id, study_id: self.id)
+        array.save
+      end
+
+      # clean up and save records
       @metadata_records.each do |metadata|
         # since first element is nil to preserve index order from file...
         unless metadata.nil?
-          Rails.logger.info "#{Time.now}: Saving study metadata: #{metadata.name}-#{metadata.annotation_type} using #{metadata_file.upload_file_name} in #{self.name}"
+          Rails.logger.info "#{Time.now}: Saving cell metadata: #{metadata.name}-#{metadata.annotation_type} using #{metadata_file.upload_file_name}:#{metadata_file.id} in #{self.name}"
           metadata.save
+        end
+      end
+
+      @metadata_data_arrays.each do |array|
+        unless array.nil?
+          Rails.logger.info "Saving cell metadata data array: #{array.name}-#{array.array_index} using #{metadata_file.upload_file_name}:#{metadata_file.id} in #{self.name}"
+          array.save
         end
       end
       metadata_data.close
       metadata_file.update(parse_status: 'parsed')
 
       # set initialized to true if possible
-      if self.expression_scores.any? && self.cluster_groups.any? && !self.initialized?
+      if self.genes.any? && self.cluster_groups.any? && !self.initialized?
         Rails.logger.info "#{Time.now}: initializing #{self.name}"
         self.update!(initialized: true)
         Rails.logger.info "#{Time.now}: #{self.name} successfully initialized"
@@ -1679,7 +1853,7 @@ class Study
       @message << "Total Time: #{time.first} minutes, #{time.last} seconds"
 
       # load newly parsed data
-      new_metadata = StudyMetadatum.where(study_id: self.id, study_file_id: metadata_file.id).to_a
+      new_metadata = CellMetadatum.where(study_id: self.id, study_file_id: metadata_file.id)
 
       # check to make sure that all the necessary metadata-based subsample arrays exist for this study
       # if parsing first before clusters, will simply exit without performing any action and will be created when clusters are parsed
@@ -1691,7 +1865,7 @@ class Study
           # the delete call is necessary as we may be reparsing the file in which case the old entries need to be removed
           # if we are not reparsing, the delete call does nothing
           required_subsamples.each do |sample_size|
-            DataArray.where(subsample_theshold: sample_size, subsample_annotation: "#{metadatum.name}--#{metadatum.annotation_type}--study").delete_all
+            DataArray.where(study_id: self.id, subsample_theshold: sample_size, subsample_annotation: "#{metadatum.name}--#{metadatum.annotation_type}--study").delete_all
             cluster_group.delay.generate_subsample_arrays(sample_size, metadatum.name, metadatum.annotation_type, 'study')
           end
         end
@@ -1719,24 +1893,28 @@ class Study
       end
 
       # set the cell count
-      self.set_cell_count(metadata_file.file_type)
+      self.set_cell_count
 
-      Rails.logger.info "#{Time.now}: determining upload status of metadata file: #{metadata_file.upload_file_name}"
+      Rails.logger.info "#{Time.now}: determining upload status of metadata file: #{metadata_file.upload_file_name}:#{metadata_file.id}"
 
       # now that parsing is complete, we can move file into storage bucket and delete local (unless we downloaded from FireCloud to begin with)
-      if opts[:local]
+      destination = metadata_file.remote_location.blank? ? metadata_file.upload_file_name : metadata_file.remote_location
+      remote = Study.firecloud_client.get_workspace_file(self.firecloud_project, self.firecloud_workspace, destination)
+      if remote.nil?
         begin
-          Rails.logger.info "#{Time.now}: preparing to upload metadata file: #{metadata_file.upload_file_name} to FireCloud"
+          Rails.logger.info "#{Time.now}: preparing to upload metadata file: #{metadata_file.upload_file_name}:#{metadata_file.id} to FireCloud"
           self.send_to_firecloud(metadata_file)
         rescue => e
-          Rails.logger.info "#{Time.now}: Metadata file: #{metadata_file.upload_file_name} failed to upload to FireCloud due to #{e.message}"
+          Rails.logger.info "#{Time.now}: Metadata file: #{metadata_file.upload_file_name}:#{metadata_file.id} failed to upload to FireCloud due to #{e.message}"
           SingleCellMailer.notify_admin_upload_fail(metadata_file, e.message).deliver_now
         end
       else
         # we have the file in FireCloud already, so just delete it
         begin
-          Rails.logger.info "#{Time.now}: deleting local file #{metadata_file.upload_file_name} after successful parse; file already exists in #{self.bucket_id}"
-          File.delete(@file_location)
+          Rails.logger.info "#{Time.now}: found remote version of #{metadata_file.upload_file_name}: #{remote.name} (#{remote.generation})"
+          run_at = 15.seconds.from_now
+          Delayed::Job.enqueue(UploadCleanupJob.new(self, metadata_file), run_at: run_at)
+          Rails.logger.info "#{Time.now}: cleanup job for #{metadata_file.upload_file_name}:#{metadata_file.id} scheduled for #{run_at}"
         rescue => e
           # we don't really care if the delete fails, we can always manually remove it later as the file is in FireCloud already
           Rails.logger.error "#{Time.now}: Could not delete #{metadata_file.name} in study #{self.name}; aborting"
@@ -1745,8 +1923,10 @@ class Study
       end
     rescue => e
       # parse has failed, so clean up records and remove file
-      StudyMetadatum.where(study_id: self.id).delete_all
+      CellMetadatum.where(study_id: self.id).delete_all
+      DataArray.where(study_file_id: metadata_file.id).delete_all
       filename = metadata_file.upload_file_name
+      metadata_file.remove_local_copy
       metadata_file.destroy
       error_message = "#{@last_line} ERROR: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
@@ -1783,10 +1963,10 @@ class Study
       content_type = marker_file.determine_content_type
       # validate headers
       if content_type == 'application/gzip'
-        Rails.logger.info "#{Time.now}: Parsing #{marker_file.name} as application/gzip"
+        Rails.logger.info "#{Time.now}: Parsing #{marker_file.name}:#{marker_file.id} as application/gzip"
         file = Zlib::GzipReader.open(@file_location)
       else
-        Rails.logger.info "#{Time.now}: Parsing #{marker_file.name} as text/plain"
+        Rails.logger.info "#{Time.now}: Parsing #{marker_file.name}:#{marker_file.id} as text/plain"
         file = File.open(@file_location, 'rb')
       end
 
@@ -1800,6 +1980,7 @@ class Study
       file.close
     rescue => e
       filename = marker_file.upload_file_name
+      marker_file.remove_local_copy
       marker_file.destroy
       error_message = "#{@last_line} ERROR: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
@@ -1820,7 +2001,7 @@ class Study
 
     # begin parse
     begin
-      Rails.logger.info "#{Time.now}: Beginning precomputed score parse using #{marker_file.name} for #{self.name}"
+      Rails.logger.info "#{Time.now}: Beginning precomputed score parse using #{marker_file.name}:#{marker_file.id} for #{self.name}"
       marker_file.update(parse_status: 'parsing')
       list_name = marker_file.name
       if list_name.nil? || list_name.blank?
@@ -1889,19 +2070,23 @@ class Study
       Rails.logger.info "#{Time.now}: determining upload status of gene list file: #{marker_file.upload_file_name}"
 
       # now that parsing is complete, we can move file into storage bucket and delete local (unless we downloaded from FireCloud to begin with)
-      if opts[:local]
+      destination = marker_file.remote_location.blank? ? marker_file.upload_file_name : marker_file.remote_location
+      remote = Study.firecloud_client.get_workspace_file(self.firecloud_project, self.firecloud_workspace, destination)
+      if remote.nil?
         begin
-          Rails.logger.info "#{Time.now}: preparing to upload gene list file: #{marker_file.upload_file_name} to FireCloud"
+          Rails.logger.info "#{Time.now}: preparing to upload gene list file: #{marker_file.upload_file_name}:#{marker_file.id} to FireCloud"
           self.send_to_firecloud(marker_file)
         rescue => e
-          Rails.logger.info "#{Time.now}: Gene List file: #{marker_file.upload_file_name} failed to upload to FireCloud due to #{e.message}"
+          Rails.logger.info "#{Time.now}: Gene List file: #{marker_file.upload_file_name}:#{marker_file.id} failed to upload to FireCloud due to #{e.message}"
           SingleCellMailer.notify_admin_upload_fail(marker_file, e.message).deliver_now
         end
       else
         # we have the file in FireCloud already, so just delete it
         begin
-          Rails.logger.info "#{Time.now}: deleting local file #{marker_file.upload_file_name} after successful parse; file already exists in #{self.bucket_id}"
-          File.delete(@file_location)
+          Rails.logger.info "#{Time.now}: found remote version of #{marker_file.upload_file_name}: #{remote.name} (#{remote.generation})"
+          run_at = 15.seconds.from_now
+          Delayed::Job.enqueue(UploadCleanupJob.new(self, metadata_file), run_at: run_at)
+          Rails.logger.info "#{Time.now}: cleanup job for #{marker_file.upload_file_name}:#{marker_file.id} scheduled for #{run_at}"
         rescue => e
           # we don't really care if the delete fails, we can always manually remove it later as the file is in FireCloud already
           Rails.logger.error "#{Time.now}: Could not delete #{marker_file.name} in study #{self.name}; aborting"
@@ -1912,6 +2097,7 @@ class Study
       # parse has failed, so clean up records and remove file
       PrecomputedScore.where(study_file_id: marker_file.id).delete_all
       filename = marker_file.upload_file_name
+      marker_file.remove_local_copy
       marker_file.destroy
       error_message = "#{@last_line} ERROR: #{e.message}"
       Rails.logger.info Time.now.to_s + ': ' + error_message
@@ -1930,7 +2116,7 @@ class Study
   # will compress plain text files before uploading to reduce storage/egress charges
   def send_to_firecloud(file)
     begin
-      Rails.logger.info "#{Time.now}: Uploading #{file.upload_file_name} to FireCloud workspace: #{self.firecloud_workspace}"
+      Rails.logger.info "#{Time.now}: Uploading #{file.upload_file_name}:#{file.id} to FireCloud workspace: #{self.firecloud_workspace}"
       file_location = file.remote_location.blank? ? file.upload.path : File.join(self.data_store_path, file.remote_location)
       # determine if file needs to be compressed
       first_two_bytes = File.open(file_location).read(2)
@@ -1939,9 +2125,9 @@ class Study
       opts = {}
       if file_is_gzipped or file.upload_file_name.last(4) == '.bam' or file.upload_file_name.last(5) == '.cram'
         # log that file is already compressed
-        Rails.logger.info "#{Time.now}: #{file.upload_file_name} is already compressed, direct uploading"
+        Rails.logger.info "#{Time.now}: #{file.upload_file_name}:#{file.id} is already compressed, direct uploading"
       else
-        Rails.logger.info "#{Time.now}: Performing gzip on #{file.upload_file_name}"
+        Rails.logger.info "#{Time.now}: Performing gzip on #{file.upload_file_name}:#{file.id}"
         # Compress all uncompressed files before upload.
         # This saves time on upload and download, and money on egress and storage.
         gzip_filepath = file_location + '.tmp.gz'
@@ -1956,20 +2142,20 @@ class Study
       end
       remote_file = Study.firecloud_client.execute_gcloud_method(:create_workspace_file, self.firecloud_project, self.firecloud_workspace, file.upload.path, file.upload_file_name, opts)
       # store generation tag to know whether a file has been updated in GCP
-      Rails.logger.info "#{Time.now}: Updating #{file.upload_file_name} with generation tag: #{remote_file.generation} after successful upload"
+      Rails.logger.info "#{Time.now}: Updating #{file.upload_file_name}:#{file.id} with generation tag: #{remote_file.generation} after successful upload"
       file.update(generation: remote_file.generation)
       file.update(upload_file_size: remote_file.size)
-      Rails.logger.info "#{Time.now}: Upload of #{file.upload_file_name} complete, scheduling cleanup job"
+      Rails.logger.info "#{Time.now}: Upload of #{file.upload_file_name}:#{file.id} complete, scheduling cleanup job"
       # schedule the upload cleanup job to run in two minutes
-      run_at = 2.minutes.from_now
+      run_at = 15.seconds.from_now
       Delayed::Job.enqueue(UploadCleanupJob.new(file.study, file), run_at: run_at)
-      Rails.logger.info "#{Time.now}: cleanup job for #{file.upload_file_name} scheduled for #{run_at}"
+      Rails.logger.info "#{Time.now}: cleanup job for #{file.upload_file_name}:#{file.id} scheduled for #{run_at}"
     rescue RuntimeError => e
-      Rails.logger.error "#{Time.now}: unable to upload '#{file.upload_file_name} to FireCloud; #{e.message}"
+      Rails.logger.error "#{Time.now}: unable to upload '#{file.upload_file_name}:#{file.id} to FireCloud; #{e.message}"
       # check if file still exists
       file_location = file.remote_location.blank? ? file.upload.path : File.join(self.data_store_path, file.remote_location)
       exists = File.exists?(file_location)
-      Rails.logger.info "#{Time.now} local copy of #{file.upload_file_name} still in #{self.data_store_path}? #{exists}"
+      Rails.logger.info "#{Time.now} local copy of #{file.upload_file_name}:#{file.id} still in #{self.data_store_path}? #{exists}"
       SingleCellMailer.notify_admin_upload_fail(file, e.message).deliver_now
     end
   end

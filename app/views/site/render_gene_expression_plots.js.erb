@@ -24,19 +24,25 @@ $('#expression-plots [data-toggle="tooltip"]').tooltip({container: 'body'});
 CLUSTER_TYPE = '<%= @cluster.cluster_type %>'
 
 // clear listeners and reattach
-$( window ).off('resizeEnd');
+$(window).off('resizeEnd');
 
-$( window ).on('resizeEnd', function() {
+$(window).on('resizeEnd', function() {
     var newBoxWidth = $('#box-plot').actual('width');
     var newScatterSize = $('#scatter-plot').actual('width');
     var newReferenceSize = $('#reference-plot').actual('width');
+
+    if (newBoxWidth < minPlotAreaWidth) {
+      newBoxWidth = minPlotAreaWidth;
+    }
+
     scatterLayout['width'] = newScatterSize;
     scatterLayout['height'] = newScatterSize;
     staticLayout['width'] = newReferenceSize;
     staticLayout['height'] = newReferenceSize;
+
     Plotly.relayout('box-plot', {width: newBoxWidth});
-    Plotly.newPlot('scatter-plot', clusterData, scatterLayout);
-    Plotly.newPlot('reference-plot', dataRef, staticLayout);
+    Plotly.relayout('scatter-plot', scatterLayout);
+    Plotly.relayout('reference-plot', staticLayout);
 });
 
 // attach click event for toggle switch
