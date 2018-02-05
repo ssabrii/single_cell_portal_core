@@ -18,6 +18,8 @@ class ProjectMetadatum
   validates_presence_of :payload, :version
   validate :validate_payload
 
+  before_validation :create_payload
+
   ENTITY_NAME = 'project'
   ENTITY_FILENAME = ENTITY_NAME + '.json'
 
@@ -36,6 +38,20 @@ class ProjectMetadatum
 
   def entity
     ENTITY_NAME
+  end
+
+  def get_property(property)
+    property_list = []
+    if self.payload.present?
+      if self.payload[property].any?
+        property_list = self.payload[property]
+      end
+    end
+    property_list
+  end
+
+  def create_payload(unformatted_payload)
+
   end
 
   private

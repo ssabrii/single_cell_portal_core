@@ -1,14 +1,108 @@
 <h1>Editing Project Metadata for '<%= @study.name %>'</h1>
-<%= form_for(@project_metadatum, url: update_project_metadata_path, html: {class: 'form', id: 'project-metadatum-form'}) do |f| %>
-  <% if @project_metadatum.errors.any? %>
-    <div class="bs-callout bs-callout-danger" id="study-errors-block">
-      <h4><%= pluralize(@project_metadatum.errors.count, "error") %> prohibited this project metadata from being saved:</h4>
-      <ul>
-        <% @project_metadatum.errors.full_messages.each do |message| %>
-          <li><%= message %></li>
-        <% end %>
-      </ul>
-    </div>
-  <% end %>
+<%= form_for(:project_metadatum, url: update_project_metadata_study_path, html: {class: 'form', id: 'project-metadatum-form'}) do |f| %>
+  <%= f.hidden_field :study_id, value: @project_metadatum.study_id %>
+  <%= f.hidden_field :version, value: @project_metadatum.version %>
+
+  <%= f.label :contributors, 'Provide a list of contributors for this project' %><br />
+  <div id="contributors-list">
+    <% @project_metadatum.get_property('contributors').each_with_index do |contributor, index| %>
+      <div class="row" id="contributor_<%= index %>">
+        <div class="col-sm-6">
+          <%= text_field_tag "project_metadatum_contributors_attributes_#{index}_name", contributor['name'],
+                             name: "project_metadatum[publications_attributes][#{index}][name]", class: 'form-control contributor-name' %>
+        </div>
+        <div class="col-sm-4">
+          <%= text_field_tag "project_metadatum_contributors_attributes_#{index}_email", contributor['email'],
+                             name: "project_metadatum[publications_attributes][#{index}][email]", class: 'form-control contributor-email' %>
+        </div>
+        <div class="col-sm-2">
+          <%= link_to "<i class='fa fa-fw fa-times'></i>".html_safe, 'javascript:;', class: 'btn btn-sm btn-danger', data: {id: "contributor_#{index}"} %>
+        </div>
+      </div>
+    <% end %>
+  </div>
+  <p><%= link_to "<i class='fa fa-fw fa-plus'></i> Add a contributor".html_safe, 'javascript:;', class: 'btn btn-sm btn-primary', id: 'add-contributor' %></p>
+  <%= f.label :publications, 'Provide a list of publications for this project' %><br />
+  <div id="publications-list">
+    <% @project_metadatum.get_property('publications').each_with_index do |publication, index| %>
+      <div class="row" id="publication_<%= index %>">
+        <div class="col-sm-12">
+          <%= text_field_tag "project_metadatum_publications_attributes_#{index}_title", publication['title'],
+                             name: "project_metadatum[publications_attributes][#{index}][title]" , class: 'form-control publication-title' %>
+        </div>
+        <div class="col-sm-12">
+          <%= text_field_tag "project_metadatum_publications_attributes_#{index}_authors", publication['authors'],
+                             name: "project_metadatum[publications_attributes][#{index}][authors]" , class: 'form-control publication-authors' %>
+        </div>
+        <div class="col-sm-5">
+          <%= text_field_tag "project_metadatum_publications_attributes_#{index}_pmid", publication['pmid'],
+                             name: "project_metadatum[publications_attributes][#{index}][pmid]" , class: 'form-control publication-pmid' %>
+        </div>
+        <div class="col-sm-5">
+          <%= text_field_tag "project_metadatum_publications_attributes_#{index}_doi", publication['doi'],
+                             name: "project_metadatum[publications_attributes][#{index}][doi]" , class: 'form-control publication-doi' %>
+        </div>
+        <div class="col-sm-2">
+          <%= link_to "<i class='fa fa-fw fa-times'></i>".html_safe, 'javascript:;', class: 'btn btn-sm btn-danger', data: {id: "publication_#{index}"} %>
+        </div>
+      </div>
+    <% end %>
+  </div>
+  <p><%= link_to "<i class='fa fa-fw fa-plus'></i> Add a publication".html_safe, 'javascript:;', class: 'btn btn-sm btn-primary', id: 'add-publication' %></p>
 
 <% end %>
+
+<script type="text/javascript">
+
+    $('#add-contributor').click(function() {
+        var numContributors = $('.contributor-name').length;
+        var contributorsTarget = $('#contributors-list');
+        var newContributor = "<div class='well well-sm' id='contributor_" + numContributors + "'><div class='row'><div class='col-sm-6'>" +
+            "<input class='form-control contributor-name' placeholder='Full Name' type='text' " +
+            "name='project_metadatum[contributors_attributes][" + numContributors + "][name]' " +
+            "id='project_metadatum_contributors_attributes_" + numContributors+ "_name'>" +
+            "</div><div class='col-sm-5'>" +
+            "<input class='form-control contributor-email' placeholder='Email Address' type='email' " +
+            "name='project_metadatum[contributors_attributes][" + numContributors + "][email]' " +
+            "id='project_metadatum_contributors_attributes_" + numContributors+ "_email'>" +
+            "</div><div class='col-sm-1'>" +
+            "<a href='javascript:;' class='btn btn-sm btn-danger remove-association pull-right' " +
+            "data-id='contributor_" + numContributors + "' data-toggle='tooltip' title='Remove this entry?'>" +
+            "<i class='fa fa-fw fa-times'></i></a></div></div></div>";
+        contributorsTarget.append(newContributor);
+    });
+
+    $('#add-publication').click(function() {
+        var numPapers = $('.publication-title').length;
+        var papersTarget = $('#publications-list');
+        var newPaper = "<div class='well well-sm' id='publication_" + numPapers + "'><div class='row'><div class='col-sm-12'>" +
+            "<input class='form-control publication-title' placeholder='Title' type='text' " +
+            "name='project_metadatum[publications_attributes][" + numPapers + "][name]' " +
+            "id='project_metadatum_publications_attributes_" + numPapers+ "_name'>" +
+            "</div><div class='col-sm-12'>" +
+            "<input class='form-control publication-authors' placeholder='Authors (comma delimited list)' type='text' " +
+            "name='project_metadatum[publications_attributes][" + numPapers + "][authors]' " +
+            "id='project_metadatum_publications_attributes_" + numPapers+ "_authors'>" +
+            "</div><div class='col-sm-6'>" +
+            "<input class='form-control publication-pmid' placeholder='PMID' type='text' " +
+            "name='project_metadatum[publications_attributes][" + numPapers + "][pmid]' " +
+            "id='project_metadatum_publications_attributes_" + numPapers+ "_pmid'>" +
+            "</div><div class='col-sm-5'>" +
+            "<input class='form-control publication-doi' placeholder='DOI' type='text' " +
+            "name='project_metadatum[publications_attributes][" + numPapers + "][doi]' " +
+            "id='project_metadatum_publications_attributes_" + numPapers+ "_doi'>" +
+            "</div><div class='col-sm-1'>" +
+            "<a href='javascript:;' class='btn btn-sm btn-danger remove-association pull-right' " +
+            "data-id='publication_" + numPapers + "' data-toggle='tooltip' title='Remove this entry?'>" +
+            "<i class='fa fa-fw fa-times'></i></a></div></div></div>";
+        papersTarget.append(newPaper);
+    });
+
+
+    $('#project-metadatum-form').on('click', '.remove-association', function() {
+        var rowId = $(this).data('id');
+        $(this).tooltip('hide');
+        $('#' + rowId).remove();
+    });
+
+</script>

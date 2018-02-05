@@ -105,8 +105,8 @@ module HCAUtilities
         defs[lookup]
       else
         filename = reference_url.split('/').last
-        ext_schema = parse_definition_schema(filename)
-        ext_schema[filename][lookup]
+        ext_schema = parse_definition_schema(filename: filename)
+        ext_schema[lookup]
       end
     rescue NoMethodError => e
       Rails.logger.error "#{Time.now}: Error accessing #{reference_url} field definitions for #{lookup}: #{e.message}"

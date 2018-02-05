@@ -919,14 +919,14 @@ class StudiesController < ApplicationController
   def edit_project_metadata
     @project_metadatum = @study.project_metadatum
     if @project_metadatum.nil?
-      @project_metadatum = @study.project_metadatum.build(version: '4.6.1')
+      @project_metadatum = ProjectMetadatum.new(study_id: @study.id, version: '4.6.1')
     end
   end
 
   def update_project_metadata
     @project_metadatum = @study.project_metadatum
     if @project_metadatum.nil?
-      @project_metadatum = @study.project_metadatum.build(version: '4.6.1')
+      @project_metadatum = ProjectMetadatum.new(study_id: @study.id, version: '4.6.1')
     end
 
     respond_to do |format|

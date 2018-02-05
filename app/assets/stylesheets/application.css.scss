@@ -568,3 +568,12 @@ h4, .h4, h5, .h5, h6, .h6 {
   width: 20%;
 }
 
+#contributors-list, #publications-list {
+  .well .form-control {
+    margin: 5px 0;
+  }
+  .pull-right {
+    position: relative;
+    top: 5px;
+  }
+}
