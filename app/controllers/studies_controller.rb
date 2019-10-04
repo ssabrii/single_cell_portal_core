@@ -397,7 +397,8 @@ class StudiesController < ApplicationController
       # delete firecloud workspace so it can be reused (unless specified by user), and raise error if unsuccessful
       # if successful, we're clear to queue the study for deletion
       # if a study is detached, then force the 'persist' option as it will fail otherwise
-      if params[:workspace] == 'persist' || @study.detached
+      # if the user does not have permission to delete the workspace but can delete the study, also force persist
+      if params[:workspace] == 'persist' || @study.detached || !@study.can_delete_workspace?(current_user)
         @study.update(firecloud_workspace: SecureRandom.uuid)
       else
         begin

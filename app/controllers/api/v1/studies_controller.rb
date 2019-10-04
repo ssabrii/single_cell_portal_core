@@ -263,8 +263,12 @@ module Api
           # set queued_for_deletion manually - gotcha due to race condition on page reloading and how quickly delayed_job can process jobs
           @study.update(queued_for_deletion: true)
 
-          if params[:workspace] == 'persist'
-            @study.update(firecloud_workspace: nil)
+          # delete firecloud workspace so it can be reused (unless specified by user), and raise error if unsuccessful
+          # if successful, we're clear to queue the study for deletion
+          # if a study is detached, then force the 'persist' option as it will fail otherwise
+          # if the user does not have permission to delete the workspace but can delete the study, also force persist
+          if params[:workspace] == 'persist' || @study.detached || !@study.can_delete_workspace?(current_user)
+            @study.update(firecloud_workspace: SecureRandom.uuid)
           else
             begin
               Study.firecloud_client.delete_workspace(@study.firecloud_project, @study.firecloud_workspace)

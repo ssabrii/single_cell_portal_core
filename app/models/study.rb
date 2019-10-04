@@ -653,9 +653,26 @@ class Study
     (self.public? && user.present?) || (user.present? && user.admin?) || self.has_bucket_access?(user)
   end
 
-  # check if user can delete a study - only owners can
+  # check if user can delete a study - only owners and admins can
   def can_delete?(user)
     self.user_id == user.id || user.admin?
+  end
+
+  # check if user can delete a workspace - only workspace owners can
+  def can_delete_workspace?(user)
+    # only owners and admins can delete studies
+    if self.can_delete?(user)
+      if self.firecloud_project == FireCloudClient::PORTAL_NAMESPACE
+        true
+      else
+        # for studies in other projects, we need to validate that the service account has
+        # owner permissions before allowing deletes
+        acl = Study.firecloud_client.get_workspace_acl(self.firecloud_project, self.firecloud_workspace)
+        acl[Study.firecloud_client.issuer] == 'OWNER'
+      end
+    else
+      false
+    end
   end
 
   # check if a user can run workflows on the given study
@@ -3170,10 +3187,17 @@ class Study
       begin
         client = FireCloudClient.new(self.user, self.firecloud_project)
         service_account = Study.firecloud_client.issuer
-        acl = client.create_workspace_acl(service_account, 'OWNER', true, true)
+        # determine the level of permission that needs to be granted to the service account
+        workspace_acl = client.get_workspace_acl(self.firecloud_project, self.firecloud_workspace)['acl']
+        user_acl = workspace_acl[self.user.email]
+        permission = user_acl['accessLevel']
+        # only grant share permission if user owns workspace
+        acl = client.create_workspace_acl(service_account, permission, permission == 'OWNER',
+                                          permission == 'OWNER')
+
         client.update_workspace_acl(self.firecloud_project, self.firecloud_workspace, acl)
         updated = client.get_workspace_acl(self.firecloud_project, self.firecloud_workspace)
-        return updated['acl'][service_account]['accessLevel'] == 'OWNER'
+        updated['acl'][service_account]['accessLevel'] == permission
       rescue RuntimeError => e
         ErrorTracker.report_exception(e, self.user, {firecloud_project: self.firecloud_workspace})
         Rails.logger.error "#{Time.zone.now}: unable to add portal service account to #{self.firecloud_workspace}: #{e.message}"

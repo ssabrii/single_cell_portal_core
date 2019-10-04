@@ -30,7 +30,9 @@
                   <%= scp_link_to "<span class='fas fa-sync-alt'></span> Sync Workspace".html_safe, sync_study_path(study), class: "btn btn-xs btn-warning #{study.url_safe_name}-sync sync-button" %>
                   <%= scp_link_to "<span class='fas fa-edit'></span> Edit Study".html_safe, edit_study_path(study), class: "btn btn-xs btn-primary #{study.url_safe_name}-edit" %>
                   <% if study.can_delete?(current_user) %>
-                    <%= scp_link_to "<span class='fas fa-trash'></span> Delete All".html_safe, study_path(study), class: "btn btn-xs btn-danger delete-btn #{study.url_safe_name}-delete", title: 'Delete everything including Terra workspace' , method: :delete, data: {toggle: 'tooltip', placement: 'top'} %>
+                    <% if study.can_delete_workspace?(current_user) %>
+                      <%= scp_link_to "<span class='fas fa-trash'></span> Delete All".html_safe, study_path(study), class: "btn btn-xs btn-danger delete-btn #{study.url_safe_name}-delete", title: 'Delete everything including Terra workspace' , method: :delete, data: {toggle: 'tooltip', placement: 'top'} %>
+                    <% end %>
                     <%= scp_link_to "<span class='fas fa-trash'></span> Delete Local Only".html_safe, study_path(id: study.id, workspace: 'persist'), class: "btn btn-xs btn-danger delete-btn #{study.url_safe_name}-delete-local", title: 'Delete all database records but keep Terra workspace' , method: :delete, data: {toggle: 'tooltip', placement: 'top'} %>
                   <% end %>
                 <% end %>
