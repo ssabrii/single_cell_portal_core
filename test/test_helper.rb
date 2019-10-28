@@ -32,8 +32,3 @@ class ActiveSupport::TestCase
     Hash[*difference.flatten]
   end
 end
-
-if ENV['CI'] == 'true'
-  require 'codecov'
-  SimpleCov.formatter = SimpleCov::Formatter::Codecov
-end
