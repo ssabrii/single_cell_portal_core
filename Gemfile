@@ -84,3 +84,5 @@ gem 'sentry-raven'
 gem 'travis'
 gem 'rubyzip'
 gem 'tcell_agent'
+
+gem 'codecov', :require => false, :group => :test
