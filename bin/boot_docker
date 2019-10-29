@@ -177,6 +177,7 @@ then
 	-e GA_TRACKING_ID="$GA_TRACKING_ID" -e GOOGLE_CLOUD_KEYFILE_JSON="$GOOGLE_CLOUD_KEYFILE_JSON" -e GOOGLE_PRIVATE_KEY="$GOOGLE_PRIVATE_KEY" \
 	-e GOOGLE_CLIENT_EMAIL="$GOOGLE_CLIENT_EMAIL" -e GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" -e GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
 	single_cell_docker:$DOCKER_IMAGE_VERSION bin/run_unit_tests.sh $EXTRA_ARGS
+  bash <(curl -s https://codecov.io/bash)
 else
 	docker run --rm -it --name "$CONTAINER_NAME" -p 80:80 -p 443:443 -p 587:587 --link mongodb:mongodb -h localhost -v $PROJECT_DIR:/home/app/webapp:rw \
 	-v $PROJECT_DIR/log/nginx:/var/log/nginx:rw -e PASSENGER_APP_ENV=$PASSENGER_APP_ENV -e MONGO_LOCALHOST=$MONGO_LOCALHOST \

@@ -114,6 +114,10 @@ GEM
     childprocess (0.9.0)
       ffi (~> 1.0, >= 1.0.11)
     climate_control (0.2.0)
+    codecov (0.1.15)
+      json
+      simplecov
+      url
     coffee-rails (4.2.2)
       coffee-script (>= 2.2.0)
       railties (>= 4.0.0)
@@ -143,6 +147,7 @@ GEM
       responders
       warden (~> 1.2.3)
     digest-crc (0.4.1)
+    docile (1.3.2)
     domain_name (0.5.20180417)
       unf (>= 0.0.5, < 1.0.0)
     erubi (1.8.0)
@@ -382,6 +387,11 @@ GEM
       faraday (~> 0.9)
       jwt (>= 1.5, < 3.0)
       multi_json (~> 1.10)
+    simplecov (0.17.1)
+      docile (~> 1.1)
+      json (>= 1.8, < 3)
+      simplecov-html (~> 0.10.0)
+    simplecov-html (0.10.2)
     spring (2.0.2)
       activesupport (>= 4.2)
     sprockets (3.7.2)
@@ -425,6 +435,7 @@ GEM
     unf (0.1.4)
       unf_ext
     unf_ext (0.0.7.5)
+    url (0.3.2)
     warden (1.2.8)
       rack (>= 2.0.6)
     webpacker (4.0.7)
@@ -449,6 +460,7 @@ DEPENDENCIES
   bootstrap-sass!
   brakeman
   bson_ext
+  codecov
   coffee-rails
   daemons
   debase
