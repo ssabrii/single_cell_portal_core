@@ -11,6 +11,7 @@ branches:
 services:
 - docker
 before_install:
+- rm yarn.lock
 - gem uninstall -v '>= 2' -i $(rvm gemdir)@global -ax bundler || true
 - gem install bundler -v '< 2'
 - sudo apt-get update && sudo apt-get -y install curl unzip jq
